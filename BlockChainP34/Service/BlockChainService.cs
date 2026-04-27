@@ -29,15 +29,21 @@ namespace BlockChainP34.Service
         }
         private void AddGenesisBlock()
         {
-            var block = new Block(0, DateTime.Parse("2024-06-01T00:00:00Z"), "Genesis Block", "0", "Name");
+            var block = new Block(0, DateTime.Parse("2024-06-01T00:00:00Z"), new List<Transaction>(), "Genesis Block", "0");
             block.Hash = _hashingService.ComputeHash(block);
             Chain.Add(block);
         }
 
-        public void AddBlock(string data, string author)
+        public void AddBlock(List<Transaction> transactions)
         {
             var lastBlock = Chain.Last();
-            var newBlock = new Block(lastBlock.Index + 1, DateTime.UtcNow, data, lastBlock.Hash, author);
+            var newBlock = new Block(
+    lastBlock.Index + 1,
+    DateTime.UtcNow,
+    transactions,
+    lastBlock.Hash,
+    "MinerName"
+);
 
             newBlock.Hash = _hashingService.ComputeHash(newBlock);
             _miningService.MineBlock(newBlock, Difficulty);

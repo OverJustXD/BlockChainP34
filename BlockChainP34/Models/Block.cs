@@ -10,23 +10,23 @@ namespace BlockChainP34.Models
     {
         public int Index { get; set; }
         public DateTime Timestamp { get; set; }
-        public string Data { get; set; }
+        public List<Transaction> Transactions { get; set; }
         public string Hash { get; set; }
         public string PrevHash { get; set; }
         public int Nonce { get; set; }
-        public string Author { get; set; }
+        //public string Author { get; set; }
 
         public int DifficultyAtMining { get; set; }
         public double MiningDurationSecond { get; set; } = 0;
 
-        public Block(int index, DateTime timestamp, string data, string prevHash, string author)
+        public Block(int index, DateTime timestamp, List<Transaction> transactions, string prevHash, string author)
         {
             Index = index;
             Timestamp = timestamp;
-            Data = data;
+            Transactions = transactions;
             PrevHash = prevHash;
             Hash = "";
-            Author = author;
+           // Author = author;
             Nonce = 0;
         }
 
