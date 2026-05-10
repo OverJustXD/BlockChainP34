@@ -19,27 +19,33 @@ namespace BlockChainP34.Service
 
         public long MineBlock(Block block, int difficulty)
         {
-            var target = new String('0', difficulty);
-            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-            while (true)
+            var target = new string('0', difficulty);
+            var stopwatch = Stopwatch.StartNew();
+
+            long maxNonce = long.MaxValue;
+
+            while (block.Nonce < maxNonce)
             {
                 block.Nonce++;
                 block.Hash = _hashingService.ComputeHash(block);
 
                 if (block.Nonce % 100000 == 0)
-                {
                     Console.Write(".");
-                }
 
                 if (block.Hash.StartsWith(target))
                 {
-                    Console.WriteLine($"\nBlock mined with nonce: {block.Nonce}, hash: {block.Hash}");
                     stopwatch.Stop();
+
+                    Console.WriteLine($"\nBlock mined with nonce: {block.Nonce}, hash: {block.Hash}");
+
                     block.MiningDurationSecond = stopwatch.Elapsed.TotalSeconds;
                     block.DifficultyAtMining = difficulty;
+
                     return block.Nonce;
                 }
             }
+
+            throw new Exception("Mining failed (nonce limit reached)");
         }
     }
 }
