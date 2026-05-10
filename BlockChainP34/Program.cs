@@ -1,55 +1,82 @@
-﻿using BlockChainP34.Analytics;
+﻿using BlockChainP34.Class;
 using BlockChainP34.Models;
 using BlockChainP34.Service;
-
+Console.OutputEncoding = System.Text.Encoding.UTF8;
+Console.InputEncoding = System.Text.Encoding.UTF8;
 var displayService = new DisplayService();
 var blockChainService = new BlockChainService(1);
-var transactionService = new TransactionService();
-var explorer = new BlockchainExplorer(blockChainService);
 
+var walletAlice = new Wallet(new CryptoService());
+var walletBob = new Wallet(new CryptoService());
+var analyzer = new BlockchainAnalyzer();
 
-blockChainService.AddBlock(new List<Transaction>());
+var attackService =
+    new AttackSimulationService(analyzer);
 
-blockChainService.AddBlock(new List<Transaction>
+attackService.RunAllAttacks();
+
+try
 {
-    transactionService.CreateTransaction("Alice", "Bob", 10)
-});
+    Console.WriteLine("\nMINING PHASE");
 
-blockChainService.AddBlock(new List<Transaction>
+    for (int i = 0; i < 5; i++)
+    {
+        blockChainService.MinePendingTransactions(
+            walletAlice.PublicKey
+        );
+    }
+
+    blockChainService.RebuildState();
+
+    Console.WriteLine("\nTRANSACTION PHASE");
+
+    var tx = TransactionService.CreateTransaction(
+        walletAlice.PublicKey,
+        walletBob.PublicKey,
+        10,
+        walletAlice.PrivateKey,
+        2m
+    );
+
+    blockChainService.AddTransactionToMempool(tx);
+
+    blockChainService.MinePendingTransactions(
+        walletAlice.PublicKey
+    );
+
+    Console.WriteLine("Transaction included in block successfully!");
+
+    displayService.Verbose = true;
+    displayService.DisplayBlockChain(blockChainService.Chain);
+
+    Console.WriteLine($"\nTotal Supply: {blockChainService.GetTotalSupply()}");
+
+    blockChainService.RebuildState();
+
+    Console.WriteLine("\nFINAL BALANCES");
+
+    foreach (var wallet in blockChainService.Balances)
+    {
+        Console.WriteLine($"{wallet.Key.Substring(0, 10)}... : {wallet.Value}");
+    }
+}
+catch (BlockchainException ex)
 {
-    transactionService.CreateTransaction("Alice", "Bob", 10)
-});
+    Console.ForegroundColor = ConsoleColor.Red;
+    Console.WriteLine("\nTRANSACTION FAILED");
+    Console.WriteLine(ex.Message);
+    Console.ResetColor();
 
-blockChainService.AddBlock(new List<Transaction>());
-
-blockChainService.AddBlock(new List<Transaction>
+    Console.WriteLine("\nHint: wallet needs mining rewards before spending.");
+}
+catch (Exception ex)
 {
-    transactionService.CreateTransaction("Alice", "Bob", 10),
-    transactionService.CreateTransaction("Alice", "Bob", 10)
-
-});
-
-
-Console.WriteLine($"Total Volume: {explorer.GetTotalVolume()}");
-
-var largestTx = explorer.GetLargestTransaction();
-Console.WriteLine($"Largest TX: {largestTx}");
-
-var history = explorer.GetAddressHistory("Alice");
-Console.WriteLine("Alice history:");
-foreach (var tx in history)
-{
-    Console.WriteLine(tx);
+    Console.ForegroundColor = ConsoleColor.DarkRed;
+    Console.WriteLine("\nUNEXPECTED ERROR");
+    Console.WriteLine(ex.Message);
+    Console.ResetColor();
 }
 
-if (largestTx != null)
-{
-    var (block, tx) = explorer.FindTransactionLocation(largestTx.Id);
-    Console.WriteLine($"TX found in block #{block?.Index}");
-}
-
-displayService.Verbose = true;
-displayService.DisplayBlockChain(blockChainService.Chain);
 
 //do
 //{
