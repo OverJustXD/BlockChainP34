@@ -13,7 +13,7 @@ var analyzer = new BlockchainAnalyzer();
 var attackService =
     new AttackSimulationService(analyzer);
 
-attackService.RunAllAttacks();
+//attackService.RunAllAttacks();
 
 try
 {

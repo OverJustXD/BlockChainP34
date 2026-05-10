@@ -18,10 +18,10 @@ namespace BlockChainP34.Service
         public decimal NetworkBaseFee { get; set; } = 1.0m;
         public List<Transaction> PendingTransactions { get; set; } = new();
 
-        private readonly double _targetBlockTimeSeconds = 1;
+        private readonly double _targetBlockTimeSeconds = 2;
         private readonly int _difficultyAdjustmentInterval = 3;
 
-        public int Difficulty { get; set; } = 1;
+        public int Difficulty { get; set; } = 3;
 
         private const int MinDifficulty = 1;
         private const int MaxDifficulty = 6;
@@ -218,23 +218,40 @@ namespace BlockChainP34.Service
             if (Chain.Count < _difficultyAdjustmentInterval + 1)
                 return;
 
-            var recent = Chain
+            var recentBlocks = Chain
                 .Skip(Chain.Count - _difficultyAdjustmentInterval)
                 .ToList();
 
-            var avg = recent.Average(b => b.MiningDurationSecond);
+            double realTime = recentBlocks
+                .Sum(b => b.MiningDurationSecond);
 
-            int change = 0;
-            if (avg < _targetBlockTimeSeconds * 0.5)
-                change = 1;
-            else if (avg > _targetBlockTimeSeconds * 2)
-                change = -1;
-            else
-                change = 0;
+            double targetTime =
+                _targetBlockTimeSeconds *
+                _difficultyAdjustmentInterval;
 
-            Difficulty = Math.Clamp(Difficulty + change, MinDifficulty, MaxDifficulty);
+            double ratio = targetTime / realTime;
 
-            Console.WriteLine($"Difficulty now: {Difficulty} (avg {avg:F2}s)");
+            double newDifficulty =
+                Difficulty * ratio;
+
+            Difficulty = (int)Math.Round(newDifficulty);
+
+            Difficulty = Math.Clamp(
+                Difficulty,
+                MinDifficulty,
+                MaxDifficulty
+            );
+
+            Console.ForegroundColor = ConsoleColor.Cyan;
+
+            Console.WriteLine(
+                $"Difficulty adjusted: {Difficulty}\n" +
+                $"Target Time: {targetTime:F2}s\n" +
+                $"Real Time: {realTime:F2}s\n" +
+                $"Ratio: {ratio:F2}"
+            );
+
+            Console.ResetColor();
         }
 
 
