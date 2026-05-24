@@ -19,6 +19,8 @@ namespace BlockChainP34.Models
 
         public DateTime TimeStamp { get; set; } = DateTime.UtcNow;
 
+        public byte[] SenderPublicLey { get; set; }
+
         public decimal Fee { get; set; }
 
         public Transaction(string from, string to, decimal amount, decimal fee)

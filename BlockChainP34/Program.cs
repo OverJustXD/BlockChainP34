@@ -1,15 +1,20 @@
-﻿using System;
-using System.Collections.Generic;
+﻿using BlockChainP34.Models;
 using BlockChainP34.Service;
-using BlockChainP34.Models;
+using BlockChainP34.Service.P2P;
+using System;
+using System.Collections.Generic;
 
 class Program
 {
-    static void Main()
+    static async Task Main()
     {
         Console.OutputEncoding = System.Text.Encoding.UTF8;
 
         var blockchain = new BlockChainService(1);
+
+        var p2pClient = new P2PClient();
+        var p2pServer = new P2PServer(blockchain, p2pClient);
+
         var display = new DisplayService();
 
         var tempTransactions = new List<Transaction>();
@@ -20,6 +25,11 @@ class Program
         Console.WriteLine($"PublicKey: {wallet.PublicKey.Substring(0, 20)}...");
         Console.WriteLine();
 
+        Console.Write("Enter port: ");
+        int port = int.Parse(Console.ReadLine());
+
+        p2pServer.Start(port);
+
         while (true)
         {
             Console.WriteLine("\n================ MENU ================");
@@ -28,22 +38,24 @@ class Program
             Console.WriteLine("[3] Показати блокчейн");
             Console.WriteLine("[4] Перевірити валідність");
             Console.WriteLine("[5] Майнити пустий блок");
+            Console.WriteLine("[6] Підключитися до вузла");
+            Console.WriteLine("[7] Показати мемпул");
             Console.WriteLine("[0] Вихід");
+
             Console.Write("Ваш вибір: ");
 
             string choice = Console.ReadLine();
 
             switch (choice)
             {
-
                 case "1":
                     try
                     {
-                        Console.WriteLine($"Sender (auto wallet): {wallet.PublicKey.Substring(0, 15)}...");
+                        Console.WriteLine($"Sender: {wallet.PublicKey.Substring(0, 15)}...");
 
-                        string from = wallet.PublicKey; 
+                        string from = wallet.PublicKey;
 
-                        Console.Write("Отримувач (public key або текст): ");
+                        Console.Write("Отримувач: ");
                         string to = Console.ReadLine();
 
                         Console.Write("Сума: ");
@@ -65,12 +77,15 @@ class Program
 
                         tempTransactions.Add(tx);
 
-                        Console.WriteLine("Транзакція створена і підписана.");
+                        await p2pClient.BroadcastTransactionAsync(tx);
+
+                        Console.WriteLine("Transaction created and broadcasted.");
                     }
                     catch (Exception ex)
                     {
                         Console.WriteLine($"Помилка: {ex.Message}");
                     }
+
                     break;
 
                 case "2":
@@ -109,8 +124,8 @@ class Program
                     {
                         Console.WriteLine($"Помилка майнінгу: {ex.Message}");
                     }
-                    break;
 
+                    break;
 
                 case "3":
                     display.Verbose = true;
@@ -123,6 +138,7 @@ class Program
                     Console.WriteLine(valid
                         ? "Blockchain валідний"
                         : "Blockchain пошкоджений");
+
                     break;
 
                 case "5":
@@ -134,7 +150,65 @@ class Program
                         else
                             Console.WriteLine($"Error: {result.error}");
                     }
+
                     break;
+
+                case "6":
+                    {
+                        Console.Write("Peer address (127.0.0.1:6002): ");
+
+                        var peer = Console.ReadLine();
+
+                        p2pClient.Connect(peer);
+
+                        break;
+                    }
+
+                case "7":
+                    {
+                        Console.WriteLine("\n=== MEMPOOL ===");
+
+                        foreach (var tx in blockchain.PendingTransactions)
+                        {
+                            Console.WriteLine($"TX ID: {tx.Id}");
+                            Console.WriteLine($"From: {tx.From}");
+                            Console.WriteLine($"To: {tx.To}");
+                            Console.WriteLine($"Amount: {tx.Amount}");
+                            Console.WriteLine("----------------------");
+                        }
+
+                        break;
+                    }
+
+                case "9":
+                    {
+                        Console.ForegroundColor = ConsoleColor.Magenta;
+                        Console.WriteLine("\n=== SIMULATING FOREIGN CHAIN ===");
+                        Console.ResetColor();
+
+                        var fakeNode = new BlockChainService(blockchain.Difficulty);
+
+                        Console.WriteLine("Фейкова нода майнить альтернативний всесвіт...");
+
+                        fakeNode.MineEmptyBlock("HackerWallet");
+                        fakeNode.MineEmptyBlock("HackerWallet");
+
+                        Console.ForegroundColor = ConsoleColor.DarkGray;
+                        Console.WriteLine($"Fake chain length: {fakeNode.Chain.Count}");
+                        Console.WriteLine($"Our chain length : {blockchain.Chain.Count}");
+                        Console.ResetColor();
+
+                        bool replaced = blockchain.ReplaceChain(fakeNode.Chain);
+
+                        if (!replaced)
+                        {
+                            Console.ForegroundColor = ConsoleColor.Red;
+                            Console.WriteLine("Не вдалося замінити ланцюг.");
+                            Console.ResetColor();
+                        }
+
+                        break;
+                    }
 
                 case "0":
                     return;
@@ -146,25 +220,3 @@ class Program
         }
     }
 }
-
-//do
-//{
-//    Console.WriteLine("Enter missing Difficulty (positive integer): ");
-//    var input = Console.ReadLine();
-//    if (!int.TryParse(input, out Difficulty) || Difficulty <= 0)
-//    {
-//        Console.WriteLine("Invalid input. Please enter a positive integer.");
-//    }
-//} while (Difficulty <= 0);
-
-//for (int i = 0; i < 10; i++)
-//{
-
-//    blockChainService.AddBlock("First Block", "Alex");
-//  blockChainService.AddBlock("Second Block", "Deny");
-//blockChainService.AddBlock("Third Block", "Timur");
-// blockChainService.AddBlock("Fourth Block", "Lisa");
-//displayService.DisplayBlockChain(blockChainService.Chain);
-//Console.WriteLine("Difficulty: " + blockChainService.Difficulty);
-//}
-
