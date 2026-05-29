@@ -3,6 +3,7 @@ using BlockChainP34.Service;
 using BlockChainP34.Service.P2P;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 
 class Program
 {
@@ -11,13 +12,12 @@ class Program
         Console.OutputEncoding = System.Text.Encoding.UTF8;
 
         var blockchain = new BlockChainService(1);
-
+        blockchain.LoadStateSnapshot();
         var p2pClient = new P2PClient();
         var p2pServer = new P2PServer(blockchain, p2pClient);
 
         var display = new DisplayService();
 
-        var tempTransactions = new List<Transaction>();
 
         var wallet = new Wallet(new CryptoService());
 
@@ -30,6 +30,45 @@ class Program
 
         p2pServer.Start(port);
 
+        static void RunBenchmark(BlockChainService blockchain)
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine("\n=== BENCHMARK START ===");
+            Console.ResetColor();
+
+            var stopwatch = Stopwatch.StartNew();
+
+            for (int i = 0; i < 10000; i++)
+            {
+                var tx = new Transaction("SYSTEM", $"User{i}", 1, 0);
+
+                var block = new Block(
+                    blockchain.Chain.Count,
+                    DateTime.UtcNow,
+                    new List<Transaction> { tx },
+                    blockchain.Chain.Last().Hash,
+                    "benchmark"
+                );
+
+                block.Hash = Guid.NewGuid().ToString();
+
+                blockchain.Chain.Add(block);
+            }
+
+            blockchain.RebuildState();
+
+            stopwatch.Stop();
+
+            decimal fastBalance = blockchain.GetBalance("User9999");
+
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine($"Fast state lookup: {stopwatch.ElapsedMilliseconds} ms");
+            Console.WriteLine($"Balance = {fastBalance}");
+            Console.ResetColor();
+
+            Console.WriteLine("=== BENCHMARK END ===\n");
+        }
+
         while (true)
         {
             Console.WriteLine("\n================ MENU ================");
@@ -40,6 +79,7 @@ class Program
             Console.WriteLine("[5] Майнити пустий блок");
             Console.WriteLine("[6] Підключитися до вузла");
             Console.WriteLine("[7] Показати мемпул");
+            Console.WriteLine("[8] Запустити benchmark");
             Console.WriteLine("[0] Вихід");
 
             Console.Write("Ваш вибір: ");
@@ -75,11 +115,17 @@ class Program
                             2m
                         );
 
-                        tempTransactions.Add(tx);
+                        var result = blockchain.AddTransactionToMempool(tx);
+
+                        if (!result.success)
+                        {
+                            Console.WriteLine($"TX rejected: {result.error}");
+                            break;
+                        }
 
                         await p2pClient.BroadcastTransactionAsync(tx);
 
-                        Console.WriteLine("Transaction created and broadcasted.");
+                        Console.WriteLine("Transaction added to mempool.");
                     }
                     catch (Exception ex)
                     {
@@ -89,7 +135,7 @@ class Program
                     break;
 
                 case "2":
-                    if (tempTransactions.Count == 0)
+                    if (blockchain.PendingTransactions.Count == 0)
                     {
                         Console.WriteLine("Немає транзакцій для майнінгу.");
                         break;
@@ -97,16 +143,6 @@ class Program
 
                     try
                     {
-                        foreach (var tx in tempTransactions)
-                        {
-                            var result = blockchain.AddTransactionToMempool(tx);
-
-                            if (!result.success)
-                            {
-                                Console.WriteLine($"TX rejected: {result.error}");
-                            }
-                        }
-
                         var mineResult = blockchain.MinePendingTransactions(wallet.PublicKey);
 
                         if (!mineResult.success)
@@ -117,8 +153,6 @@ class Program
                         {
                             Console.WriteLine("Block successfully mined!");
                         }
-
-                        tempTransactions.Clear();
                     }
                     catch (Exception ex)
                     {
@@ -179,6 +213,10 @@ class Program
 
                         break;
                     }
+
+                case "8":
+                    RunBenchmark(blockchain);
+                    break;
 
                 case "9":
                     {

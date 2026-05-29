@@ -2,12 +2,15 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.IO;
+using System.Text.Json;
+using System.Diagnostics;
 
 namespace BlockChainP34.Service
 {
     public class BlockChainService
     {
-        public Dictionary<string, decimal> Balances { get; private set; } = new();
+        public Dictionary<string, decimal> BalancesState { get; private set; } = new();
         public List<Block> Chain { get; private set; }
         public List<Transaction> PendingTransactions { get; private set; } = new();
 
@@ -85,8 +88,85 @@ namespace BlockChainP34.Service
             if (transaction.Fee < 0)
                 return (false, "Transaction fee cannot be negative.");
 
+            if (transaction.From != "SYSTEM")
+            {
+                decimal senderBalance = GetBalance(transaction.From);
+
+                decimal totalCost = transaction.Amount + transaction.Fee;
+
+                if (senderBalance < totalCost)
+                    return (false, $"Insufficient funds. Balance: {senderBalance}, required: {totalCost}");
+            }
+
+            int pendingFromUser = PendingTransactions.Count(x => x.From == transaction.From);
+
+            if (pendingFromUser >= 3)
+                throw new InvalidOperationException("Spam detected.");
+
             PendingTransactions.Add(transaction);
+
             return (true, null);
+        }
+
+        private void UpdateBalancesState(Block block)
+        {
+            foreach (var tx in block.Transactions)
+            {
+                if (tx.From != "SYSTEM")
+                {
+                    if (!BalancesState.ContainsKey(tx.From))
+                        BalancesState[tx.From] = 0;
+
+                    BalancesState[tx.From] -= (tx.Amount + tx.Fee);
+                }
+
+                if (!BalancesState.ContainsKey(tx.To))
+                    BalancesState[tx.To] = 0;
+
+                BalancesState[tx.To] += tx.Amount;
+            }
+        }
+
+        public void SaveStateSnapshot()
+        {
+            var json = JsonSerializer.Serialize(BalancesState,
+                new JsonSerializerOptions
+                {
+                    WriteIndented = true
+                });
+
+            File.WriteAllText("state.json", json);
+        }
+
+        public void LoadStateSnapshot()
+        {
+            if (File.Exists("state.json"))
+            {
+                var json = File.ReadAllText("state.json");
+
+                var loaded = JsonSerializer.Deserialize<Dictionary<string, decimal>>(json);
+
+                if (loaded == null || loaded.Count == 0)
+                {
+                    Console.WriteLine("Snapshot invalid → rebuilding...");
+                    RebuildState();
+                    return;
+                }
+
+                BalancesState = loaded;
+
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine("State snapshot loaded.");
+                Console.ResetColor();
+            }
+            else
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine("Snapshot not found. Rebuilding state...");
+                Console.ResetColor();
+
+                RebuildState();
+            }
         }
 
         private decimal GetMiningReward(int blockIndex)
@@ -132,8 +212,8 @@ namespace BlockChainP34.Service
                 _miningService.MineBlock(block, Difficulty);
 
                 Chain.Add(block);
-
                 RebuildState();
+                SaveStateSnapshot();
                 AdjustDifficulty();
 
                 return (true, block, null);
@@ -148,6 +228,8 @@ namespace BlockChainP34.Service
         {
             if (PendingTransactions.Count == 0)
                 return (false, null, "No transactions to mine.");
+
+            EvictStaleTransactions(60);
 
             try
             {
@@ -200,7 +282,8 @@ namespace BlockChainP34.Service
                 _miningService.MineBlock(block, Difficulty);
 
                 Chain.Add(block);
-
+                SaveStateSnapshot();
+                RebuildState();
                 var includedIds = transactionsToInclude.Select(t => t.Id).ToHashSet();
                 PendingTransactions.RemoveAll(tx => includedIds.Contains(tx.Id));
 
@@ -217,32 +300,28 @@ namespace BlockChainP34.Service
 
         public void RebuildState()
         {
-            Balances.Clear();
+            BalancesState.Clear();
 
             foreach (var block in Chain)
             {
-                foreach (var tx in block.Transactions)
-                {
-                    if (tx.From != "SYSTEM")
-                    {
-                        if (!Balances.ContainsKey(tx.From))
-                            Balances[tx.From] = 0;
-
-                        Balances[tx.From] -= (tx.Amount + tx.Fee);
-                    }
-
-                    if (!Balances.ContainsKey(tx.To))
-                        Balances[tx.To] = 0;
-
-                    Balances[tx.To] += tx.Amount;
-                }
+                UpdateBalancesState(block);
             }
         }
 
         public decimal GetBalance(string address)
         {
-            RebuildState();
-            return Balances.GetValueOrDefault(address, 0);
+            decimal balance = BalancesState.GetValueOrDefault(address, 0);
+
+            foreach (var tx in PendingTransactions)
+            {
+                if (tx.From == address)
+                    balance -= (tx.Amount + tx.Fee);
+
+                if (tx.To == address)
+                    balance += tx.Amount;
+            }
+
+            return balance;
         }
 
         public decimal GetTotalSupply()
@@ -322,7 +401,7 @@ namespace BlockChainP34.Service
                 return false;
 
             var oldChain = Chain.ToList();
-            var oldBalances = new Dictionary<string, decimal>(Balances);
+            var oldBalances = new Dictionary<string, decimal>(BalancesState);
 
             int blockGap = newChain.Count - oldChain.Count;
 
@@ -345,13 +424,54 @@ namespace BlockChainP34.Service
             return true;
         }
 
+        public int EvictStaleTransactions(int maxAgeSeconds)
+        {
+            int before = PendingTransactions.Count;
+
+            PendingTransactions = PendingTransactions
+                .Where(tx => (DateTime.UtcNow - tx.TimeStamp).TotalSeconds <= maxAgeSeconds)
+                .ToList();
+
+            return before - PendingTransactions.Count;
+        }
+
+        public bool ValidateAndRebuildState()
+        {
+            var temp = new Dictionary<string, decimal>();
+
+            foreach (var block in Chain)
+            {
+                foreach (var tx in block.Transactions)
+                {
+                    if (tx.From != "SYSTEM")
+                    {
+                        if (!temp.ContainsKey(tx.From))
+                            temp[tx.From] = 0;
+
+                        temp[tx.From] -= (tx.Amount + tx.Fee);
+
+                        if (temp[tx.From] < 0)
+                            return false;
+                    }
+
+                    if (!temp.ContainsKey(tx.To))
+                        temp[tx.To] = 0;
+
+                    temp[tx.To] += tx.Amount;
+                }
+            }
+
+            BalancesState = temp;
+            return true;
+        }
+
         private void PrintBalanceDelta(Dictionary<string, decimal> oldBalances)
         {
             foreach (var pair in oldBalances)
             {
                 var address = pair.Key;
                 var oldBalance = pair.Value;
-                var newBalance = Balances.GetValueOrDefault(address, 0);
+                var newBalance = BalancesState.GetValueOrDefault(address, 0);
 
                 var loss = oldBalance - newBalance;
 
