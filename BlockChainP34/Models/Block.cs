@@ -3,6 +3,8 @@
     public class Block
     {
         public int Index { get; set; }
+
+        public string MerkleRoot { get; set; }
         public DateTime Timestamp { get; set; }
         public List<Transaction> Transactions { get; set; }
         public string Hash { get; set; }

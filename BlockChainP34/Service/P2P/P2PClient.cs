@@ -17,9 +17,27 @@ namespace BlockChainP34.Service.P2P
             }
         }
 
-        public async Task BroadcastTransactionAsync(Transaction transaction)
+        public async Task BroadcastTransactionAsync(Transaction tx)
         {
-            var jsonTransaction = JsonSerializer.Serialize(transaction);
+            await Broadcast(new P2PMessage
+            {
+                Type = "tx",
+                Data = JsonSerializer.Serialize(tx)
+            });
+        }
+
+        public async Task BroadcastChainAsync(List<Block> chain)
+        {
+            await Broadcast(new P2PMessage
+            {
+                Type = "chain",
+                Data = JsonSerializer.Serialize(chain)
+            });
+        }
+
+        private async Task Broadcast(P2PMessage message)
+        {
+            var json = JsonSerializer.Serialize(message);
 
             foreach (var peer in _peers)
             {
@@ -27,22 +45,16 @@ namespace BlockChainP34.Service.P2P
                 {
                     var parts = peer.Split(':');
 
-                    var ip = parts[0];
-                    var port = int.Parse(parts[1]);
-
                     using var client = new TcpClient();
+                    await client.ConnectAsync(parts[0], int.Parse(parts[1]));
 
-                    await client.ConnectAsync(ip, port);
-
-                    await using var stream = client.GetStream();
-                    await using var writer = new StreamWriter(stream)
+                    using var stream = client.GetStream();
+                    using var writer = new StreamWriter(stream)
                     {
                         AutoFlush = true
                     };
 
-                    await writer.WriteLineAsync(jsonTransaction);
-
-                    Console.WriteLine($"[P2P] Transaction sent to {peer}");
+                    await writer.WriteLineAsync(json);
                 }
                 catch (Exception ex)
                 {

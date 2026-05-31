@@ -11,7 +11,7 @@ namespace BlockChainP34.Service
     public class BlockChainService
     {
         public Dictionary<string, decimal> BalancesState { get; private set; } = new();
-        public List<Block> Chain { get; private set; }
+        public List<Block> Chain { get; set; }
         public List<Transaction> PendingTransactions { get; private set; } = new();
 
         private readonly HashingService _hashingService;
@@ -38,6 +38,7 @@ namespace BlockChainP34.Service
             AddGenesisBlock();
         }
 
+
         private void AddGenesisBlock()
         {
             var genesis = new Block(
@@ -48,7 +49,9 @@ namespace BlockChainP34.Service
                 "GENESIS"
             );
 
+            genesis.MerkleRoot = _hashingService.BuildMerkleRoot(genesis.Transactions);
             genesis.Hash = _hashingService.ComputeHash(genesis);
+
             Chain.Add(genesis);
         }
 
@@ -187,15 +190,9 @@ namespace BlockChainP34.Service
             try
             {
                 var last = Chain.Last();
-
                 var reward = GetMiningReward(Chain.Count);
 
-                var coinbaseTx = new Transaction(
-                    "SYSTEM",
-                    minerPublicKey,
-                    reward,
-                    0
-                );
+                var coinbaseTx = new Transaction("SYSTEM", minerPublicKey, reward, 0);
 
                 var block = new Block(
                     last.Index + 1,
@@ -205,6 +202,7 @@ namespace BlockChainP34.Service
                     minerPublicKey
                 );
 
+                block.MerkleRoot = _hashingService.BuildMerkleRoot(block.Transactions);
                 block.BurnedFees = 0;
                 block.TipFees = 0;
                 block.DifficultyAtMining = Difficulty;
@@ -275,6 +273,7 @@ namespace BlockChainP34.Service
                     minerPublicKey
                 );
 
+                block.MerkleRoot = _hashingService.BuildMerkleRoot(transactionsToInclude);
                 block.BurnedFees = totalBurned;
                 block.TipFees = totalTips;
                 block.DifficultyAtMining = Difficulty;
@@ -369,6 +368,20 @@ namespace BlockChainP34.Service
             Console.ResetColor();
         }
 
+        private void LogSecurityIncident(Transaction tx)
+        {
+            string logLine =
+                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] " +
+                $"АТАКА ВИЯВЛЕНА! " +
+                $"Підроблена транзакція ID: {tx.Id}. " +
+                $"Спроба змінити суму на: {tx.Amount}.";
+
+            File.AppendAllText(
+                "security_alerts.txt",
+                logLine + Environment.NewLine
+            );
+        }
+
         public bool IsValid()
         {
             for (int i = 1; i < Chain.Count; i++)
@@ -382,8 +395,34 @@ namespace BlockChainP34.Service
                 if (current.Hash != _hashingService.ComputeHash(current))
                     return false;
 
-                if (!current.Hash.StartsWith(new string('0', current.DifficultyAtMining)))
+                if (!current.Hash.StartsWith(
+                    new string('0', current.DifficultyAtMining)))
                     return false;
+
+                foreach (var tx in current.Transactions)
+                {
+                    if (tx.From == "SYSTEM")
+                        continue;
+
+                    var validation =
+                        TransactionService.ValidateTransaction(tx);
+
+                    if (!validation.IsValid)
+                    {
+                        Console.ForegroundColor = ConsoleColor.Red;
+
+                        Console.WriteLine(
+                            $"[CRITICAL] Підроблена транзакція! " +
+                            $"ID={tx.Id}"
+                        );
+
+                        Console.ResetColor();
+
+                        LogSecurityIncident(tx);
+
+                        return false;
+                    }
+                }
             }
 
             return true;
@@ -463,6 +502,130 @@ namespace BlockChainP34.Service
 
             BalancesState = temp;
             return true;
+        }
+
+
+        public BlockChainP34.Models.AuditReport RunFullAudit(List<Block> chain)
+        {
+            var report = new AuditReport();
+
+            if (chain == null || chain.Count == 0)
+            {
+                report.IsChainValid = false;
+                return report;
+            }
+
+            for (int i = 0; i < chain.Count; i++)
+            {
+                var current = chain[i];
+                var violations = new List<string>();
+
+                if (i > 0)
+                {
+                    var prev = chain[i - 1];
+
+                    if (current.PrevHash != prev.Hash)
+                    {
+                        violations.Add(
+                            $"[Block #{current.Index}] PrevHash mismatch — expected {prev.Hash}, actual {current.PrevHash}"
+                        );
+                    }
+                }
+
+                var expectedMerkleRoot = _hashingService.BuildMerkleRoot(current.Transactions);
+
+                if (current.MerkleRoot != expectedMerkleRoot)
+                {
+                    violations.Add(
+                        $"[Block #{current.Index}] MerkleRoot mismatch — транзакції були підроблені"
+                    );
+                }
+
+                int difficultyToCheck = current.DifficultyAtMining > 0
+                    ? current.DifficultyAtMining
+                    : Difficulty;
+
+                string requiredPrefix = new string('0', difficultyToCheck);
+
+                if (string.IsNullOrWhiteSpace(current.Hash) || !current.Hash.StartsWith(requiredPrefix))
+                {
+                    violations.Add(
+                        $"[Block #{current.Index}] Hash does not meet difficulty — блок не перемайнено"
+                    );
+                }
+
+                if (violations.Count > 0)
+                {
+                    report.CompromisedBlockIndexes.Add(current.Index);
+                    report.ViolationDetails[current.Index] = violations;
+                }
+            }
+
+            report.IsChainValid = report.CompromisedBlockIndexes.Count == 0;
+            return report;
+        }
+
+        public Block FindAttackOrigin(AuditReport report, List<Block> chain)
+        {
+            if (report == null || chain == null || chain.Count == 0)
+                return null;
+
+            foreach (var block in chain.OrderBy(b => b.Index))
+            {
+                if (block.Index == 0)
+                    continue;
+
+                if (!report.ViolationDetails.TryGetValue(block.Index, out var violations))
+                    continue;
+
+                bool hasNonPrevHashViolation = violations.Any(v =>
+                    !v.Contains("PrevHash mismatch", StringComparison.OrdinalIgnoreCase));
+
+                if (hasNonPrevHashViolation)
+                    return block;
+            }
+
+            return null;
+        }
+
+        public string GenerateForensicReport(AuditReport report, Block attackOrigin)
+        {
+            var sb = new System.Text.StringBuilder();
+
+            sb.AppendLine("=== FORENSIC AUDIT REPORT ===");
+            sb.AppendLine($"Chain status: {(report.IsChainValid ? "VALID" : "COMPROMISED")}");
+
+            if (attackOrigin != null)
+            {
+                sb.AppendLine(
+                    $"Attack origin: Block #{attackOrigin.Index} (timestamp: {attackOrigin.Timestamp:O})"
+                );
+            }
+            else
+            {
+                sb.AppendLine("Attack origin: NOT FOUND");
+            }
+
+            int affectedBlocks = attackOrigin != null
+                ? report.CompromisedBlockIndexes.Count(i => i >= attackOrigin.Index)
+                : report.CompromisedBlockIndexes.Count;
+
+            sb.AppendLine($"Total affected blocks: {affectedBlocks}");
+            sb.AppendLine();
+            sb.AppendLine("VIOLATION LOG:");
+
+            foreach (var blockIndex in report.CompromisedBlockIndexes.OrderBy(x => x))
+            {
+                if (!report.ViolationDetails.TryGetValue(blockIndex, out var violations))
+                    continue;
+
+                foreach (var violation in violations)
+                {
+                    sb.AppendLine(violation);
+                }
+            }
+
+            return sb.ToString();
         }
 
         private void PrintBalanceDelta(Dictionary<string, decimal> oldBalances)

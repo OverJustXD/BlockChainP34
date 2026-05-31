@@ -44,11 +44,19 @@ namespace BlockChainP34.Service.P2P
                 using var stream = client.GetStream();
                 using var reader = new StreamReader(stream);
 
-                var jsonTransaction = await reader.ReadLineAsync();
+                var json = await reader.ReadLineAsync();
 
-                if (!string.IsNullOrEmpty(jsonTransaction))
+                if (string.IsNullOrEmpty(json))
+                    return;
+
+                var message = JsonSerializer.Deserialize<P2PMessage>(json);
+                if (message == null)
+                    return;
+
+
+                if (message.Type == "tx")
                 {
-                    var tx = JsonSerializer.Deserialize<Transaction>(jsonTransaction);
+                    var tx = JsonSerializer.Deserialize<Transaction>(message.Data);
 
                     if (tx != null &&
                         !_blockchain.PendingTransactions.Any(t => t.Id == tx.Id))
@@ -57,10 +65,26 @@ namespace BlockChainP34.Service.P2P
 
                         if (result.success)
                         {
-                            Console.WriteLine("[Gossip] Transaction received!");
-                            Console.WriteLine("[Gossip] Forwarding to other peers...");
+                            Console.WriteLine("[Gossip] TX received");
 
                             await _client.BroadcastTransactionAsync(tx);
+                        }
+                    }
+                }
+
+
+                else if (message.Type == "chain")
+                {
+                    var incomingChain =
+                        JsonSerializer.Deserialize<List<Block>>(message.Data);
+
+                    if (incomingChain != null)
+                    {
+                        Console.WriteLine("[Gossip] Chain received!");
+
+                        if (incomingChain.Count > _blockchain.Chain.Count)
+                        {
+                            _blockchain.ReplaceChain(incomingChain);
                         }
                     }
                 }

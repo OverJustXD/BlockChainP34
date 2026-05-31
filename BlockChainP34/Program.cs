@@ -4,6 +4,7 @@ using BlockChainP34.Service.P2P;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Text.Json;
 
 class Program
 {
@@ -13,6 +14,39 @@ class Program
 
         var blockchain = new BlockChainService(1);
         blockchain.LoadStateSnapshot();
+
+
+        if (File.Exists("blockchain.json"))
+        {
+            try
+            {
+                var json = File.ReadAllText("blockchain.json");
+                var chain = JsonSerializer.Deserialize<List<Block>>(json);
+
+                if (chain != null && chain.Count > 0)
+                {
+                    blockchain.Chain = chain;
+                    blockchain.RebuildState();
+
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.WriteLine("Blockchain loaded from blockchain.json");
+                    Console.ResetColor();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Load error: {ex.Message}");
+            }
+        }
+
+        if (!blockchain.IsValid())
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine("\n[CRITICAL] Підроблена транзакція виявлена при старті!");
+            Console.ResetColor();
+        }
+
+
         var p2pClient = new P2PClient();
         var p2pServer = new P2PServer(blockchain, p2pClient);
 
@@ -80,6 +114,12 @@ class Program
             Console.WriteLine("[6] Підключитися до вузла");
             Console.WriteLine("[7] Показати мемпул");
             Console.WriteLine("[8] Запустити benchmark");
+            Console.WriteLine("[H] Симуляція хакерської атаки");
+            Console.WriteLine("[P] Generate Network Passport");
+            Console.WriteLine("[-] Аудит блокчейну");
+            Console.WriteLine("[+] Очистити кеш");
+            Console.WriteLine("[+] Очистити кеш");
+            Console.WriteLine("[`] Показати довжину ланцюга");
             Console.WriteLine("[0] Вихід");
 
             Console.Write("Ваш вибір: ");
@@ -152,6 +192,8 @@ class Program
                         else
                         {
                             Console.WriteLine("Block successfully mined!");
+
+                            await p2pClient.BroadcastChainAsync(blockchain.Chain);
                         }
                     }
                     catch (Exception ex)
@@ -180,12 +222,17 @@ class Program
                         var result = blockchain.MineEmptyBlock(wallet.PublicKey);
 
                         if (result.success)
+                        {
                             Console.WriteLine("Empty block mined!");
+                            await p2pClient.BroadcastChainAsync(blockchain.Chain);
+                        }
                         else
+                        {
                             Console.WriteLine($"Error: {result.error}");
-                    }
+                        }
 
-                    break;
+                        break;
+                    }
 
                 case "6":
                     {
@@ -245,6 +292,108 @@ class Program
                             Console.ResetColor();
                         }
 
+                        break;
+                    }
+
+                case "H":
+                case "h":
+                    {
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.WriteLine("\n=== HACK ATTACK ===");
+                        Console.ResetColor();
+
+                        var targetBlock = blockchain.Chain
+                            .FirstOrDefault(b => b.Transactions.Any(t => t.From != "SYSTEM"));
+
+                        if (targetBlock == null)
+                        {
+                            Console.WriteLine("Немає блоків з реальними транзакціями");
+                            break;
+                        }
+
+                        var tx = targetBlock.Transactions
+                            .FirstOrDefault(t => t.From != "SYSTEM");
+
+                        if (tx == null)
+                        {
+                            Console.WriteLine("Нема транзакцій для атаки");
+                            break;
+                        }
+
+                        Console.WriteLine($"Block: {targetBlock.Index}");
+                        Console.WriteLine($"TX: {tx.Id}");
+                        Console.WriteLine($"Old: {tx.Amount}");
+
+                        tx.Amount = 1_000_000m;
+
+                        Console.WriteLine($"New: {tx.Amount}");
+
+                        File.WriteAllText(
+                            "blockchain.json",
+                            JsonSerializer.Serialize(blockchain.Chain,
+                                new JsonSerializerOptions { WriteIndented = true })
+                        );
+
+                        Console.ForegroundColor = ConsoleColor.Yellow;
+                        Console.WriteLine("Hacked blockchain saved!");
+                        Console.ResetColor();
+
+                        break;
+                    }
+
+                case "P":
+                case "p":
+                    {
+                        Console.Write("Student ID: ");
+                        string id = Console.ReadLine();
+
+                        var report = blockchain.RunFullAudit(blockchain.Chain);
+                        var origin = blockchain.FindAttackOrigin(report, blockchain.Chain);
+
+                        var passport = StorageService.GenerateNetworkPassport(
+                            blockchain,
+                            id,
+                            origin?.Index ?? -1,
+                            origin?.Hash ?? "NOT_FOUND"
+                        );
+
+                        StorageService.SavePassport(passport);
+
+                        Console.ForegroundColor = ConsoleColor.Green;
+                        Console.WriteLine("passport.json generated!");
+                        Console.ResetColor();
+
+                        break;
+                    }
+
+                case "-":
+                    {
+                        var report = blockchain.RunFullAudit(blockchain.Chain);
+                        var origin = blockchain.FindAttackOrigin(report, blockchain.Chain);
+                        var forensic = blockchain.GenerateForensicReport(report, origin);
+
+                        Console.WriteLine();
+                        Console.WriteLine(forensic);
+
+                        break;
+                    }
+
+                case "+":
+                    {
+                        File.Delete("blockchain.json");
+                        File.Delete("state.json");
+
+                        Console.WriteLine("Local blockchain state reset.");
+
+                        blockchain.Chain.Clear();
+                        blockchain = new BlockChainService(blockchain.Difficulty);
+
+                        break;
+                    }
+
+                case "`":
+                    {
+                        Console.WriteLine($"Chain length = {blockchain.Chain.Count}");
                         break;
                     }
 
