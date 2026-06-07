@@ -1,9 +1,5 @@
 ﻿using BlockChainP34.Service;
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace BlockChainP34.Models
 {
@@ -11,11 +7,25 @@ namespace BlockChainP34.Models
     {
         public string PublicKey { get; set; }
         public string PrivateKey { get; set; }
+
+        public Wallet()
+        {
+        }
+
         public Wallet(CryptoService cryptoService)
         {
+            if (cryptoService == null)
+                throw new ArgumentNullException(nameof(cryptoService));
+
             var keyPair = cryptoService.GenerateKeyPair();
             PublicKey = keyPair.publicKey;
             PrivateKey = keyPair.privateKey;
+        }
+
+        public Wallet(string publicKey, string privateKey)
+        {
+            PublicKey = publicKey ?? throw new ArgumentNullException(nameof(publicKey));
+            PrivateKey = privateKey ?? throw new ArgumentNullException(nameof(privateKey));
         }
     }
 }

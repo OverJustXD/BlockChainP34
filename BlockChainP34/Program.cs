@@ -4,17 +4,22 @@ using BlockChainP34.Service.P2P;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
+using System.Linq;
 using System.Text.Json;
+namespace BlockChainP34.Service.P2P;
+using System.Threading.Tasks;
 
 class Program
 {
+    private static string walletPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wallet.json");
+
     static async Task Main()
     {
         Console.OutputEncoding = System.Text.Encoding.UTF8;
 
         var blockchain = new BlockChainService(1);
         blockchain.LoadStateSnapshot();
-
 
         if (File.Exists("blockchain.json"))
         {
@@ -29,101 +34,108 @@ class Program
                     blockchain.RebuildState();
 
                     Console.ForegroundColor = ConsoleColor.Green;
-                    Console.WriteLine("Blockchain loaded from blockchain.json");
+                    Console.WriteLine("[Система] Блокчейн успішно завантажено з файла blockchain.json");
                     Console.ResetColor();
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Load error: {ex.Message}");
+                Console.WriteLine($"[Помилка завантаження блокчейну]: {ex.Message}");
             }
         }
 
         if (!blockchain.IsValid())
         {
             Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine("\n[CRITICAL] Підроблена транзакція виявлена при старті!");
+            Console.WriteLine("\n[CRITICAL] Підроблена або невалідна транзакція виявлена при старті системи!");
             Console.ResetColor();
         }
 
+        Wallet wallet = null;
+        var cryptoService = new CryptoService();
+
+        if (File.Exists(walletPath))
+        {
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine("=== АВТОРИЗАЦІЯ ГАМАНЦЯ ===");
+            Console.ResetColor();
+
+            while (wallet == null)
+            {
+                Console.Write("Введіть пароль для розшифрування ключів: ");
+                string password = ReadPassword();
+
+                try
+                {
+                    var keys = WalletService.LoadWallet(password, walletPath);
+                    wallet = new Wallet(keys.publicKey, keys.privateKey);
+
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.WriteLine("\n[Keystore] Гаманець успішно розшифровано. Вхід дозволено.");
+                    Console.ResetColor();
+                }
+                catch (Exception ex)
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine($"\n[Помилка доступу]: {ex.Message}. Спробуйте ще раз.\n");
+                    Console.ResetColor();
+                }
+            }
+        }
+        else
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine("=== РЕЄСТРАЦІЯ НОВОГО ГАМАНЦЯ ===");
+            Console.ResetColor();
+            Console.Write("Задайте надійний пароль для захисту AES-256: ");
+            string password = ReadPassword();
+
+            wallet = new Wallet(cryptoService);
+
+            WalletService.SaveWallet(wallet.PublicKey, wallet.PrivateKey, password, walletPath);
+
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine("\n[Keystore] Новий зашифрований гаманець wallet.json збережено на диску.");
+            Console.ResetColor();
+        }
+
+        Console.WriteLine($"\n=== АКТИВНИЙ ГАМАНЕЦЬ ===");
+        Console.WriteLine($"PublicKey: {wallet.PublicKey.Substring(0, 20)}...");
+        Console.WriteLine($"Баланс:    {blockchain.GetBalance(wallet.PublicKey)} COIN\n");
 
         var p2pClient = new P2PClient();
         var p2pServer = new P2PServer(blockchain, p2pClient);
-
+        p2pClient.Init(blockchain); 
         var display = new DisplayService();
 
-
-        var wallet = new Wallet(new CryptoService());
-
-        Console.WriteLine("\n=== WALLET CREATED ===");
-        Console.WriteLine($"PublicKey: {wallet.PublicKey.Substring(0, 20)}...");
-        Console.WriteLine();
-
-        Console.Write("Enter port: ");
-        int port = int.Parse(Console.ReadLine());
+        Console.Write("Введіть локальний порт для сервера (напр. 5001): ");
+        if (!int.TryParse(Console.ReadLine(), out int port))
+        {
+            port = 5001;
+        }
 
         p2pServer.Start(port);
-
-        static void RunBenchmark(BlockChainService blockchain)
-        {
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine("\n=== BENCHMARK START ===");
-            Console.ResetColor();
-
-            var stopwatch = Stopwatch.StartNew();
-
-            for (int i = 0; i < 10000; i++)
-            {
-                var tx = new Transaction("SYSTEM", $"User{i}", 1, 0);
-
-                var block = new Block(
-                    blockchain.Chain.Count,
-                    DateTime.UtcNow,
-                    new List<Transaction> { tx },
-                    blockchain.Chain.Last().Hash,
-                    "benchmark"
-                );
-
-                block.Hash = Guid.NewGuid().ToString();
-
-                blockchain.Chain.Add(block);
-            }
-
-            blockchain.RebuildState();
-
-            stopwatch.Stop();
-
-            decimal fastBalance = blockchain.GetBalance("User9999");
-
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine($"Fast state lookup: {stopwatch.ElapsedMilliseconds} ms");
-            Console.WriteLine($"Balance = {fastBalance}");
-            Console.ResetColor();
-
-            Console.WriteLine("=== BENCHMARK END ===\n");
-        }
 
         while (true)
         {
             Console.WriteLine("\n================ MENU ================");
-            Console.WriteLine("[1] Додати транзакцію");
-            Console.WriteLine("[2] Змайнити блок");
+            Console.WriteLine($"[ Поточний порт ноди: {port} ]");
+            Console.WriteLine("[1] Додати транзакцію (та розіслати в мережу)");
+            Console.WriteLine("[2] Змайнити блок (із транзакцій мемпулу)");
             Console.WriteLine("[3] Показати блокчейн");
-            Console.WriteLine("[4] Перевірити валідність");
+            Console.WriteLine("[4] Перевірити валідність ланцюга");
             Console.WriteLine("[5] Майнити пустий блок");
-            Console.WriteLine("[6] Підключитися до вузла");
-            Console.WriteLine("[7] Показати мемпул");
+            Console.WriteLine("[6] Підключитися до віддаленого піра");
+            Console.WriteLine("[7] Показати локальний мемпул");
             Console.WriteLine("[8] Запустити benchmark");
-            Console.WriteLine("[H] Симуляція хакерської атаки");
-            Console.WriteLine("[P] Generate Network Passport");
+            Console.WriteLine("[H] Симуляція хакерської атаки (модифікація файлу)");
+            Console.WriteLine("[P] Згенерувати Network Passport");
             Console.WriteLine("[-] Аудит блокчейну");
-            Console.WriteLine("[+] Очистити кеш");
-            Console.WriteLine("[+] Очистити кеш");
+            Console.WriteLine("[+] Очистити кеш та скинути стан");
             Console.WriteLine("[`] Показати довжину ланцюга");
             Console.WriteLine("[0] Вихід");
 
             Console.Write("Ваш вибір: ");
-
             string choice = Console.ReadLine();
 
             switch (choice)
@@ -131,19 +143,18 @@ class Program
                 case "1":
                     try
                     {
-                        Console.WriteLine($"Sender: {wallet.PublicKey.Substring(0, 15)}...");
-
+                        Console.WriteLine($"Відправник: {wallet.PublicKey.Substring(0, 15)}...");
                         string from = wallet.PublicKey;
 
-                        Console.Write("Отримувач: ");
+                        Console.Write("Отримувач (Вставте PublicKey піра): ");
                         string to = Console.ReadLine();
 
-                        Console.Write("Сума: ");
+                        Console.Write("Сума переказу: ");
                         string amountInput = Console.ReadLine();
 
                         if (!decimal.TryParse(amountInput, out decimal amount))
                         {
-                            Console.WriteLine("Невірна сума!");
+                            Console.WriteLine("Помилка: Невірна сума!");
                             break;
                         }
 
@@ -152,32 +163,32 @@ class Program
                             to,
                             amount,
                             wallet.PrivateKey,
-                            2m
+                            2m 
                         );
 
                         var result = blockchain.AddTransactionToMempool(tx);
 
                         if (!result.success)
                         {
-                            Console.WriteLine($"TX rejected: {result.error}");
+                            Console.ForegroundColor = ConsoleColor.Red;
+                            Console.WriteLine($"Транзакція відхилена: {result.error}");
+                            Console.ResetColor();
                             break;
                         }
 
                         await p2pClient.BroadcastTransactionAsync(tx);
-
-                        Console.WriteLine("Transaction added to mempool.");
+                        Console.WriteLine("Транзакція успішно додана в мемпул та надіслана в мережу.");
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"Помилка: {ex.Message}");
+                        Console.WriteLine($"Помилка створення транзакції: {ex.Message}");
                     }
-
                     break;
 
                 case "2":
                     if (blockchain.PendingTransactions.Count == 0)
                     {
-                        Console.WriteLine("Немає транзакцій для майнінгу.");
+                        Console.WriteLine("Мемпул порожній. Немає транзакцій для майнінгу.");
                         break;
                     }
 
@@ -187,11 +198,15 @@ class Program
 
                         if (!mineResult.success)
                         {
-                            Console.WriteLine($"Mining failed: {mineResult.error}");
+                            Console.WriteLine($"Майнінг не вдався: {mineResult.error}");
                         }
                         else
                         {
-                            Console.WriteLine("Block successfully mined!");
+                            Console.ForegroundColor = ConsoleColor.Green;
+                            Console.WriteLine("Блок успішно змайнено та додано в ланцюг!");
+                            Console.ResetColor();
+
+                            File.WriteAllText("blockchain.json", JsonSerializer.Serialize(blockchain.Chain));
 
                             await p2pClient.BroadcastChainAsync(blockchain.Chain);
                         }
@@ -200,7 +215,6 @@ class Program
                     {
                         Console.WriteLine($"Помилка майнінгу: {ex.Message}");
                     }
-
                     break;
 
                 case "3":
@@ -210,96 +224,78 @@ class Program
 
                 case "4":
                     bool valid = blockchain.IsValid();
-
-                    Console.WriteLine(valid
-                        ? "Blockchain валідний"
-                        : "Blockchain пошкоджений");
-
+                    if (valid)
+                    {
+                        Console.ForegroundColor = ConsoleColor.Green;
+                        Console.WriteLine("Блокчейн повністю валідний.");
+                    }
+                    else
+                    {
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.WriteLine("Увага! Блокчейн ХАКНУТИЙ або пошкоджений!");
+                    }
+                    Console.ResetColor();
                     break;
 
                 case "5":
+                    try
                     {
                         var result = blockchain.MineEmptyBlock(wallet.PublicKey);
 
                         if (result.success)
                         {
-                            Console.WriteLine("Empty block mined!");
+                            Console.WriteLine("Порожній блок успішно змайнено.");
+                            File.WriteAllText("blockchain.json", JsonSerializer.Serialize(blockchain.Chain));
                             await p2pClient.BroadcastChainAsync(blockchain.Chain);
                         }
                         else
                         {
-                            Console.WriteLine($"Error: {result.error}");
+                            Console.WriteLine($"Помилка: {result.error}");
                         }
-
-                        break;
                     }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Помилка: {ex.Message}");
+                    }
+                    break;
 
                 case "6":
-                    {
-                        Console.Write("Peer address (127.0.0.1:6002): ");
+                    Console.Write("Введіть адресу піра для підключення (напр. 127.0.0.1:5002): ");
+                    var peer = Console.ReadLine();
+                    if (string.IsNullOrWhiteSpace(peer)) break;
 
-                        var peer = Console.ReadLine();
+                    p2pClient.Connect(peer);
 
-                        p2pClient.Connect(peer);
-
-                        break;
-                    }
+                    Console.ForegroundColor = ConsoleColor.Cyan;
+                    Console.WriteLine($"[Мережа] Запит на синхронізацію надіслано до {peer}. Очікуйте Gossip-відповіді.");
+                    Console.ResetColor();
+                    break;
 
                 case "7":
+                    Console.WriteLine("\n=== ПОТОЧНИЙ МЕМПУЛ (PENDING TRANSACTIONS) ===");
+                    if (blockchain.PendingTransactions.Count == 0)
                     {
-                        Console.WriteLine("\n=== MEMPOOL ===");
-
-                        foreach (var tx in blockchain.PendingTransactions)
-                        {
-                            Console.WriteLine($"TX ID: {tx.Id}");
-                            Console.WriteLine($"From: {tx.From}");
-                            Console.WriteLine($"To: {tx.To}");
-                            Console.WriteLine($"Amount: {tx.Amount}");
-                            Console.WriteLine("----------------------");
-                        }
-
-                        break;
+                        Console.WriteLine("Порожньо.");
                     }
+                    foreach (var txItem in blockchain.PendingTransactions)
+                    {
+                        Console.WriteLine($"TX ID:  {txItem.Id}");
+                        Console.WriteLine($"From:   {txItem.From.Substring(0, Math.Min(15, txItem.From.Length))}...");
+                        Console.WriteLine($"To:     {txItem.To.Substring(0, Math.Min(15, txItem.To.Length))}...");
+                        Console.WriteLine($"Amount: {txItem.Amount} COIN");
+                        Console.WriteLine("--------------------------------------------");
+                    }
+                    break;
 
                 case "8":
                     RunBenchmark(blockchain);
                     break;
 
-                case "9":
-                    {
-                        Console.ForegroundColor = ConsoleColor.Magenta;
-                        Console.WriteLine("\n=== SIMULATING FOREIGN CHAIN ===");
-                        Console.ResetColor();
-
-                        var fakeNode = new BlockChainService(blockchain.Difficulty);
-
-                        Console.WriteLine("Фейкова нода майнить альтернативний всесвіт...");
-
-                        fakeNode.MineEmptyBlock("HackerWallet");
-                        fakeNode.MineEmptyBlock("HackerWallet");
-
-                        Console.ForegroundColor = ConsoleColor.DarkGray;
-                        Console.WriteLine($"Fake chain length: {fakeNode.Chain.Count}");
-                        Console.WriteLine($"Our chain length : {blockchain.Chain.Count}");
-                        Console.ResetColor();
-
-                        bool replaced = blockchain.ReplaceChain(fakeNode.Chain);
-
-                        if (!replaced)
-                        {
-                            Console.ForegroundColor = ConsoleColor.Red;
-                            Console.WriteLine("Не вдалося замінити ланцюг.");
-                            Console.ResetColor();
-                        }
-
-                        break;
-                    }
-
                 case "H":
                 case "h":
                     {
                         Console.ForegroundColor = ConsoleColor.Red;
-                        Console.WriteLine("\n=== HACK ATTACK ===");
+                        Console.WriteLine("\n=== СИМУЛЯЦІЯ ХАКЕРСЬКОЇ АТАКИ ===");
                         Console.ResetColor();
 
                         var targetBlock = blockchain.Chain
@@ -307,26 +303,26 @@ class Program
 
                         if (targetBlock == null)
                         {
-                            Console.WriteLine("Немає блоків з реальними транзакціями");
+                            Console.WriteLine("Помилка: У ланцюгу немає блоків з реальними користувацькими транзакціями.");
                             break;
                         }
 
-                        var tx = targetBlock.Transactions
+                        var attackTx = targetBlock.Transactions
                             .FirstOrDefault(t => t.From != "SYSTEM");
 
-                        if (tx == null)
+                        if (attackTx == null)
                         {
-                            Console.WriteLine("Нема транзакцій для атаки");
+                            Console.WriteLine("Немає підходящої транзакції для зламу.");
                             break;
                         }
 
-                        Console.WriteLine($"Block: {targetBlock.Index}");
-                        Console.WriteLine($"TX: {tx.Id}");
-                        Console.WriteLine($"Old: {tx.Amount}");
+                        Console.WriteLine($"Злам Блоку №: {targetBlock.Index}");
+                        Console.WriteLine($"ID транзакції: {attackTx.Id}");
+                        Console.WriteLine($"Оригінальна сума: {attackTx.Amount}");
 
-                        tx.Amount = 1_000_000m;
+                        attackTx.Amount = 1_000_000m;
 
-                        Console.WriteLine($"New: {tx.Amount}");
+                        Console.WriteLine($"Модифіковано на: {attackTx.Amount}");
 
                         File.WriteAllText(
                             "blockchain.json",
@@ -335,16 +331,15 @@ class Program
                         );
 
                         Console.ForegroundColor = ConsoleColor.Yellow;
-                        Console.WriteLine("Hacked blockchain saved!");
+                        Console.WriteLine("[Атака] Модифікований (зламаний) блокчейн перезаписано на диск!");
                         Console.ResetColor();
-
                         break;
                     }
 
                 case "P":
                 case "p":
                     {
-                        Console.Write("Student ID: ");
+                        Console.Write("Введіть Student ID: ");
                         string id = Console.ReadLine();
 
                         var report = blockchain.RunFullAudit(blockchain.Chain);
@@ -360,9 +355,8 @@ class Program
                         StorageService.SavePassport(passport);
 
                         Console.ForegroundColor = ConsoleColor.Green;
-                        Console.WriteLine("passport.json generated!");
+                        Console.WriteLine("Файл passport.json успішно згенеровано.");
                         Console.ResetColor();
-
                         break;
                     }
 
@@ -374,7 +368,6 @@ class Program
 
                         Console.WriteLine();
                         Console.WriteLine(forensic);
-
                         break;
                     }
 
@@ -383,27 +376,87 @@ class Program
                         File.Delete("blockchain.json");
                         File.Delete("state.json");
 
-                        Console.WriteLine("Local blockchain state reset.");
+                        Console.WriteLine("Локальні кеш-файли видалено. Стан скинуто.");
 
                         blockchain.Chain.Clear();
                         blockchain = new BlockChainService(blockchain.Difficulty);
-
                         break;
                     }
 
                 case "`":
-                    {
-                        Console.WriteLine($"Chain length = {blockchain.Chain.Count}");
-                        break;
-                    }
+                    Console.WriteLine($"Довжина ланцюга = {blockchain.Chain.Count} блоків.");
+                    break;
 
                 case "0":
+                    p2pServer.Stop();
                     return;
 
                 default:
-                    Console.WriteLine("Невірний вибір");
+                    Console.WriteLine("Невірний вибір. Оберіть пункт із меню.");
                     break;
             }
         }
+    }
+
+    private static void RunBenchmark(BlockChainService blockchain)
+    {
+        Console.ForegroundColor = ConsoleColor.Yellow;
+        Console.WriteLine("\n=== BENCHMARK START ===");
+        Console.ResetColor();
+
+        var stopwatch = Stopwatch.StartNew();
+
+        for (int i = 0; i < 10000; i++)
+        {
+            var tx = new Transaction("SYSTEM", $"User{i}", 1, 0);
+
+            var block = new Block(
+                blockchain.Chain.Count,
+                DateTime.UtcNow,
+                new List<Transaction> { tx },
+                blockchain.Chain.Last().Hash,
+                "benchmark"
+            );
+
+            block.Hash = Guid.NewGuid().ToString();
+            blockchain.Chain.Add(block);
+        }
+
+        blockchain.RebuildState();
+        stopwatch.Stop();
+
+        decimal fastBalance = blockchain.GetBalance("User9999");
+
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.WriteLine($"Швидкість пошуку в стані: {stopwatch.ElapsedMilliseconds} ms");
+        Console.WriteLine($"Перевірочний Баланс User9999 = {fastBalance}");
+        Console.ResetColor();
+
+        Console.WriteLine("=== BENCHMARK END ===\n");
+    }
+
+    private static string ReadPassword()
+    {
+        string pass = "";
+        while (true)
+        {
+            ConsoleKeyInfo key = Console.ReadKey(true);
+            if (key.Key == ConsoleKey.Enter) break;
+            if (key.Key == ConsoleKey.Backspace)
+            {
+                if (pass.Length > 0)
+                {
+                    pass = pass.Substring(0, pass.Length - 1);
+                    Console.Write("\b \b");
+                }
+            }
+            else
+            {
+                pass += key.KeyChar;
+                Console.Write("*");
+            }
+        }
+        Console.WriteLine();
+        return pass;
     }
 }

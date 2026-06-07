@@ -11,6 +11,11 @@ namespace BlockChainP34.Service
 
         public decimal NetworkBaseFee { get; set; } = 1.0m;
 
+        public void PrintChain(List<Block> chain)
+        {
+            DisplayBlockChain(chain);
+        }
+
         public void DisplayBlockChain(List<Block> chain)
         {
             foreach (var block in chain)

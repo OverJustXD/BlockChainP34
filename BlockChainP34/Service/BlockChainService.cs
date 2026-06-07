@@ -439,6 +439,33 @@ namespace BlockChainP34.Service
             if (!IsChainValid(newChain))
                 return false;
 
+            int forkPoint = 0;
+            while (forkPoint < Chain.Count && forkPoint < newChain.Count && Chain[forkPoint].Hash == newChain[forkPoint].Hash)
+            {
+                forkPoint++;
+            }
+
+            var orphanTransactions = new List<Transaction>();
+            for (int i = forkPoint; i < Chain.Count; i++)
+            {
+                foreach (var tx in Chain[i].Transactions)
+                {
+                    if (tx.From != "SYSTEM")
+                    {
+                        orphanTransactions.Add(tx);
+                    }
+                }
+            }
+
+            var newChainTxIds = new HashSet<string>();
+            for (int i = forkPoint; i < newChain.Count; i++)
+            {
+                foreach (var tx in newChain[i].Transactions)
+                {
+                    newChainTxIds.Add(tx.Id);
+                }
+            }
+
             var oldChain = Chain.ToList();
             var oldBalances = new Dictionary<string, decimal>(BalancesState);
 
@@ -449,7 +476,28 @@ namespace BlockChainP34.Service
             Console.ResetColor();
 
             Chain = newChain.ToList();
+
+            var currentMempool = PendingTransactions.ToList();
             PendingTransactions.Clear();
+
+            foreach (var tx in orphanTransactions)
+            {
+                if (!newChainTxIds.Contains(tx.Id))
+                {
+                    PendingTransactions.Add(tx);
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.WriteLine($"[Операція Фенікс] Транзакцію {tx.Id} врятовано з відкинутого блоку та повернено в Mempool.");
+                    Console.ResetColor();
+                }
+            }
+
+            foreach (var tx in currentMempool)
+            {
+                if (!newChainTxIds.Contains(tx.Id) && !PendingTransactions.Any(t => t.Id == tx.Id))
+                {
+                    PendingTransactions.Add(tx);
+                }
+            }
 
             RebuildState();
 
