@@ -15,6 +15,27 @@ namespace BlockChainP34.Service
         {
             DisplayBlockChain(chain);
         }
+        public void DisplayTransactionFull(Transaction tx, Block block)
+        {
+            Console.WriteLine("\n====================================================");
+            Console.WriteLine("            TRANSACTION DETAILS (SEARCH RESULT)     ");
+            Console.WriteLine("====================================================");
+
+            Console.WriteLine($"TX ID      : {tx.Id}");
+            Console.WriteLine($"From       : {tx.From}");
+            Console.WriteLine($"To         : {tx.To}");
+            Console.WriteLine($"Amount     : {tx.Amount}");
+            Console.WriteLine($"Fee        : {tx.Fee}");
+            Console.WriteLine($"Timestamp  : {tx.TimeStamp}");
+
+            Console.WriteLine("\n--- BLOCK INFO ---");
+            Console.WriteLine($"Block Index: {block.Index}");
+            Console.WriteLine($"Block Hash : {block.Hash}");
+            Console.WriteLine($"Prev Hash  : {block.PrevHash}");
+            Console.WriteLine($"Tx count   : {block.Transactions.Count}");
+
+            Console.WriteLine("====================================================\n");
+        }
 
         public void DisplayBlockChain(List<Block> chain)
         {

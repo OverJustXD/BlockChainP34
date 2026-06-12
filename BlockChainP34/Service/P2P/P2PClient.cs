@@ -152,6 +152,8 @@ namespace BlockChainP34.Service.P2P
         {
             var json = JsonSerializer.Serialize(message);
 
+            var peersToRemove = new List<string>();
+
             foreach (var peer in _peers)
             {
                 try
@@ -163,16 +165,30 @@ namespace BlockChainP34.Service.P2P
                     await client.ConnectAsync(parts[0], int.Parse(parts[1]));
 
                     using var stream = client.GetStream();
-                    using var writer = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true };
+                    using var writer = new StreamWriter(stream, Encoding.UTF8)
+                    {
+                        AutoFlush = true
+                    };
 
                     await writer.WriteLineAsync(json);
                 }
                 catch (Exception ex)
                 {
                     Console.ForegroundColor = ConsoleColor.DarkRed;
-                    Console.WriteLine($"[P2P Клієнт ERROR] Не вдалося надіслати повідомлення [{message.Type}] до {peer}: {ex.Message}");
+                    Console.WriteLine(
+                        $"[P2P Клієнт ERROR] Не вдалося надіслати повідомлення [{message.Type}] до {peer}: {ex.Message}");
                     Console.ResetColor();
+
+                    Console.WriteLine(
+                        $"[Мережа] Вузол {peer} вимкнений. Видаляємо зі списку пірів.");
+
+                    peersToRemove.Add(peer);
                 }
+            }
+
+            foreach (var peer in peersToRemove)
+            {
+                _peers.Remove(peer);
             }
         }
     }

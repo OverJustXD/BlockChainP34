@@ -173,6 +173,7 @@ namespace BlockChainP34.Service.P2P
             Console.WriteLine("[6] Підключитися до віддаленого піра");
             Console.WriteLine("[7] Показати локальний мемпул");
             Console.WriteLine("[8] Запустити benchmark");
+            Console.WriteLine("[9] Знайти транзакцію за ID");
             Console.WriteLine("[H] Симуляція хакерської атаки (модифікація файлу)");
             Console.WriteLine("[P] Згенерувати Network Passport");
             Console.WriteLine("[T] Виконати системну діагностику");
@@ -194,6 +195,7 @@ namespace BlockChainP34.Service.P2P
                 case "6": HandleConnectToPeer(); break;
                 case "7": HandleShowMempool(); break;
                 case "8": HandleRunBenchmark(); break;
+                case "9": HandleFindTransaction(); break;
                 case "H": HandleSimulateHackerAttack(); break;
                 case "P": HandleGenerateNetworkPassport(); break;
                 case "T": await HandleExecuteSystemDiagnostics(); break;
@@ -550,6 +552,55 @@ namespace BlockChainP34.Service.P2P
         private static void HandleShowChainLength()
         {
             Console.WriteLine($"Довжина ланцюга = {_blockchain.Chain.Count} блоків.");
+        }
+
+        private static void HandleFindTransaction()
+        {
+            Console.Write("Введіть ID транзакції: ");
+            string txId = Console.ReadLine();
+
+            if (string.IsNullOrWhiteSpace(txId))
+            {
+                Console.WriteLine("ID не може бути порожнім.");
+                return;
+            }
+
+            foreach (var block in _blockchain.Chain)
+            {
+                var tx = block.Transactions.FirstOrDefault(t => t.Id == txId);
+
+                if (tx != null)
+                {
+                    Console.ForegroundColor = ConsoleColor.Green;
+
+                    Console.WriteLine("\n=== TRANSACTION FOUND ===");
+                    Console.ResetColor();
+
+                    _display.DisplayTransactionFull(tx, block);
+                    return;
+                }
+            }
+
+            var pendingTx = _blockchain.PendingTransactions.FirstOrDefault(t => t.Id == txId);
+
+            if (pendingTx != null)
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine("\n=== TRANSACTION FOUND IN MEMPOOL ===");
+                Console.ResetColor();
+
+                Console.WriteLine($"TX ID: {pendingTx.Id}");
+                Console.WriteLine($"From : {pendingTx.From}");
+                Console.WriteLine($"To   : {pendingTx.To}");
+                Console.WriteLine($"Amount: {pendingTx.Amount}");
+                Console.WriteLine($"Time  : {pendingTx.TimeStamp}");
+
+                return;
+            }
+
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine("Транзакцію не знайдено.");
+            Console.ResetColor();
         }
 
         private static void HandleShutdown()
