@@ -8,7 +8,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
-
+using BlockChainP34.Models;
 namespace BlockChainP34.Service.P2P
 {
     public class P2PClient
@@ -18,6 +18,39 @@ namespace BlockChainP34.Service.P2P
 
         public bool IsSpvClient { get; private set; }
         public IReadOnlyList<string> Peers => _peers;
+
+
+        private readonly string _peersFilePath = "peers.json";
+
+        public void LoadPeers()
+        {
+            if (File.Exists(_peersFilePath))
+            {
+                var json = File.ReadAllText(_peersFilePath);
+                var savedPeers = JsonSerializer.Deserialize<List<string>>(json);
+
+                if (savedPeers != null && savedPeers.Count > 0)
+                {
+                    _peers.Clear();
+                    foreach (var p in savedPeers)
+                    {
+                        if (!_peers.Contains(p)) _peers.Add(p);
+                    }
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.WriteLine($"[DEBUG] Знайдено {savedPeers.Count} пірів у файлі: {string.Join(", ", savedPeers)}");
+                    Console.ResetColor();
+                }
+            }
+            else
+            {
+                Console.WriteLine("[DEBUG] Файл peers.json не знайдено, пропускаємо автозавантаження.");
+            }
+        }
+
+        private void SavePeers()
+        {
+            File.WriteAllText(_peersFilePath, JsonSerializer.Serialize(_peers));
+        }
 
         public void Init(BlockChainService blockchain, bool spvClient = false)
         {
@@ -32,23 +65,34 @@ namespace BlockChainP34.Service.P2P
             if (!_peers.Contains(peerAddress))
             {
                 _peers.Add(peerAddress);
+                SavePeers();
                 Console.ForegroundColor = ConsoleColor.Green;
-                Console.WriteLine($"[P2P Клієнт] Додано новий вузол до списку: {peerAddress}");
+                Console.WriteLine($"[P2P] Збережено новий вузол: {peerAddress}");
                 Console.ResetColor();
+            }
 
-                if (IsSpvClient)
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine($"[P2P] Спроба підключення до {peerAddress}...");
+            Console.ResetColor();
+            if (IsSpvClient)
+            {
+                Task.Run(async () =>
                 {
-                    Task.Run(async () => await RequestHeadersFromPeerAsync(peerAddress));
-                }
-                else
-                {
-                    Task.Run(async () =>
-                    {
-                        await RequestMempoolFromPeerAsync(peerAddress);
-                        await RequestChainFromPeerAsync(peerAddress);
-                        await RequestHeadersFromPeerAsync(peerAddress);
-                    });
-                }
+                    await RequestHeadersFromPeerAsync(peerAddress);
+                    Console.WriteLine("[SPV] Заголовки синхронізовано. Тепер можна перевіряти транзакції.");
+                });
+            }
+            else
+            {
+                Task.Run(async () => {
+                    await RequestMempoolFromPeerAsync(peerAddress);
+                    await RequestChainFromPeerAsync(peerAddress);
+                    await RequestHeadersFromPeerAsync(peerAddress);
+
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.WriteLine($"[P2P] Синхронізацію з {peerAddress} ініційовано.");
+                    Console.ResetColor();
+                });
             }
         }
 
@@ -74,19 +118,37 @@ namespace BlockChainP34.Service.P2P
                 await writer.WriteLineAsync(JsonSerializer.Serialize(message));
 
                 var responseJson = await reader.ReadLineAsync();
-                if (string.IsNullOrWhiteSpace(responseJson)) return;
+
+                if (string.IsNullOrWhiteSpace(responseJson))
+                {
+                    Console.WriteLine("[DEBUG-SPV] Відповідь від сервера порожня (null або whitespace). З'єднання розірвано?");
+                    return;
+                }
 
                 var responseMessage = JsonSerializer.Deserialize<P2PMessage>(responseJson);
-                if (responseMessage == null || responseMessage.Type != "HEADERS") return;
+                if (responseMessage == null)
+                {
+                    Console.WriteLine("[DEBUG-SPV] Помилка десеріалізації: responseMessage == null.");
+                    return;
+                }
+
+                if (responseMessage.Type != "HEADERS")
+                {
+                    Console.WriteLine($"[DEBUG-SPV] Очікували HEADERS, а отримали: {responseMessage.Type}");
+                    return;
+                }
 
                 var roots = JsonSerializer.Deserialize<List<string>>(responseMessage.Data);
                 if (roots != null && roots.Count > 0)
                 {
                     TrustedHeaderStore.AddRoots(roots);
-
                     Console.ForegroundColor = ConsoleColor.Cyan;
                     Console.WriteLine($"[SPV/Headers] Отримано {roots.Count} trusted Merkle roots від {peer}. Загалом у сховищі: {TrustedHeaderStore.Count}");
                     Console.ResetColor();
+                }
+                else
+                {
+                    Console.WriteLine("[DEBUG-SPV] Сервер повернув порожній список коренів (Count = 0).");
                 }
             }
             catch (Exception ex)
@@ -233,14 +295,15 @@ namespace BlockChainP34.Service.P2P
             try
             {
                 string[] parts = peer.Split(':');
-                if (parts.Length != 2) return;
+                if (parts.Length != 2)
+                {
+                    Console.WriteLine($"[SPV] Некоректний формат адреси піра: {peer}");
+                    return;
+                }
 
                 using var client = new TcpClient();
-                var connectTask = client.ConnectAsync(parts[0], int.Parse(parts[1]));
-                var delayTask = Task.Delay(3000);
 
-                if (await Task.WhenAny(connectTask, delayTask) == delayTask)
-                    throw new TimeoutException("Час очікування підключення вичерпано.");
+                await client.ConnectAsync(parts[0], int.Parse(parts[1])).WaitAsync(TimeSpan.FromSeconds(3));
 
                 using var stream = client.GetStream();
                 using var writer = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true };
@@ -264,14 +327,14 @@ namespace BlockChainP34.Service.P2P
                 var responseMessage = JsonSerializer.Deserialize<P2PMessage>(responseJson);
                 if (responseMessage == null || responseMessage.Type != "SPV_RESULT")
                 {
-                    Console.WriteLine("[SPV] Нода повернула невідомий тип відповіді.");
+                    Console.WriteLine("[SPV] Нода повернула невідомий або порожній тип відповіді.");
                     return;
                 }
 
                 var proof = JsonSerializer.Deserialize<SpvProofResponse>(responseMessage.Data);
                 if (proof == null)
                 {
-                    Console.WriteLine("[SPV] Некоректний SPV_result.");
+                    Console.WriteLine("[SPV] Некоректний формат SPV_result.");
                     return;
                 }
 
@@ -285,9 +348,9 @@ namespace BlockChainP34.Service.P2P
                     return;
                 }
 
-                var ok = MerkleUtilities.VerifyMerkleProof(proof.TxHash, proof.Proof, proof.ExpectedRoot);
+                var isProofValid = MerkleUtilities.VerifyMerkleProof(proof.TxHash, proof.Proof, proof.ExpectedRoot);
 
-                if (!ok)
+                if (!isProofValid)
                 {
                     Console.ForegroundColor = ConsoleColor.Red;
                     Console.WriteLine("[SPV] Математичний Merkle proof не пройшов перевірку (хеші не збігаються).");
@@ -308,6 +371,12 @@ namespace BlockChainP34.Service.P2P
                 Console.ForegroundColor = ConsoleColor.Green;
                 Console.WriteLine($"[SPV] Успіх! Транзакція {txId} підтверджена в мережі.");
                 Console.WriteLine($"[SPV] ExpectedRoot (валідний): {proof.ExpectedRoot}");
+                Console.ResetColor();
+            }
+            catch (TimeoutException)
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"[SPV] Час очікування підключення до ноди {peer} вичерпано.");
                 Console.ResetColor();
             }
             catch (Exception ex)

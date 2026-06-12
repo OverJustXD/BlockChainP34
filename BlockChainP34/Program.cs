@@ -30,6 +30,7 @@ namespace BlockChainP34.Service.P2P
             Console.OutputEncoding = System.Text.Encoding.UTF8;
 
             InitializeCoreServices();
+
             InitializeNetworkNode();
 
             if (!_isSpvClient)
@@ -39,14 +40,16 @@ namespace BlockChainP34.Service.P2P
             else
             {
                 Console.ForegroundColor = ConsoleColor.Magenta;
-                Console.WriteLine("[Система] Запущено в режимі Легкого гаманця (SPV). Файл blockchain.json ігнорується.");
+                Console.WriteLine("[Система] Запущено в режимі Легкого гаманця (SPV).");
                 Console.ResetColor();
-
                 TrustedHeaderStore.Load();
+
+                _p2pClient.Connect("127.0.0.1:5001");
+                Console.WriteLine("[Система] Чекаємо синхронізації заголовків...");
+                await Task.Delay(2000);
             }
 
             AuthenticateOrRegisterWallet();
-
             await RunApplicationLoop();
         }
 
@@ -146,6 +149,10 @@ namespace BlockChainP34.Service.P2P
             Console.WriteLine($"Баланс:    {balanceText}\n");
         }
 
+
+
+
+
         private static void InitializeNetworkNode()
         {
             Console.Write("Введіть локальний порт для сервера (напр. 5001): ");
@@ -174,6 +181,17 @@ namespace BlockChainP34.Service.P2P
                 _p2pClient.Init(null, spvClient: true);
                 Console.WriteLine($"[Мережа] SPV Клієнт запущений на порті {_port} (Очікує підключення до Full Node)");
             }
+            _p2pClient.LoadPeers();
+            foreach (var peer in _p2pClient.Peers.ToList())
+            {
+                string[] parts = peer.Split(':');
+                if (parts.Length == 2 && parts[1] == _port.ToString())
+                {
+                    Console.WriteLine("[Система] Пропущено підключення до самого себе.");
+                    continue;
+                }
+                _ = Task.Run(() => _p2pClient.Connect(peer));
+            }
         }
 
 
@@ -199,6 +217,7 @@ namespace BlockChainP34.Service.P2P
                 Console.WriteLine("[1] Створити та надіслати транзакцію в мережу");
                 Console.WriteLine("[6] Підключитися до віддаленої Повної Ноди");
                 Console.WriteLine("[V] Запросити SPV-доказ з мережі (Куленепробивна верифікація)");
+                Console.WriteLine("[K] Локальна SPV-перевірка транзакції (для тестування)");
                 Console.WriteLine("[0] Вихід");
             }
             else
@@ -224,7 +243,7 @@ namespace BlockChainP34.Service.P2P
 
         private static async Task ProcessMenuChoice(string choice)
         {
-            if (_isSpvClient && choice != "1" && choice != "6" && choice != "V" && choice != "0")
+            if (_isSpvClient && choice != "1" && choice != "6" && choice != "V" && choice != "K" && choice != "0")
             {
                 Console.ForegroundColor = ConsoleColor.Red;
                 Console.WriteLine("Дія заборонена! Опція недоступна в режимі SPV-клієнта.");
@@ -250,6 +269,12 @@ namespace BlockChainP34.Service.P2P
                 case "+": HandleResetState(); break;
                 case "`": HandleShowChainLength(); break;
                 case "V": await HandleRequestAndVerifySPV(); break;
+                case "K": HandleSpvVerification(); break;
+                case "F":
+                    var lastBlock = _blockchain.Chain.LastOrDefault();
+                    if (lastBlock != null)
+                        MerkleUtilities.TestMerkleForBlock(lastBlock);
+                    break;
                 case "0": HandleShutdown(); break;
                 default:
                     Console.WriteLine("Невірний вибір. Оберіть пункт із меню.");
@@ -490,6 +515,86 @@ namespace BlockChainP34.Service.P2P
                 if (tx != null) { _display.DisplayTransactionFull(tx, block); return; }
             }
             Console.WriteLine("Транзакцію не знайдено.");
+        }
+
+        private static void HandleSpvVerification()
+        {
+            Console.WriteLine("\n=== SPV-ПЕРЕВІРКА ТРАНЗАКЦІЇ ===");
+
+            var block = _blockchain.Chain
+    .LastOrDefault(b => b.Transactions != null &&
+                        b.Transactions.Count >= 2);
+
+            if (block == null)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("Не знайдено блоку з достатньою кількістю транзакцій.");
+                Console.ResetColor();
+                return;
+            }
+
+            var tx = block.Transactions[0];
+
+            string txHash =
+                MerkleUtilities.ComputeTransactionHash(tx);
+
+            var proof =
+                MerkleUtilities.BuildMerkleProof(
+                    block.Transactions,
+                    tx.Id);
+
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine($"\nTarget Transaction ID:");
+            Console.ResetColor();
+            Console.WriteLine(tx.Id);
+
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine("\nMerkle Proof Hash Path:");
+            Console.ResetColor();
+
+            if (proof.Count == 0)
+            {
+                Console.WriteLine("[Порожній доказ]");
+            }
+            else
+            {
+                int stepNumber = 1;
+
+                foreach (var step in proof)
+                {
+                    Console.WriteLine(
+                        $"{stepNumber++}. " +
+                        $"{(step.IsLeftSibling ? "[LEFT ]" : "[RIGHT]")} " +
+                        $"{step.SiblingHash}");
+                }
+            }
+
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine("\nExpected Merkle Root:");
+            Console.ResetColor();
+
+            Console.WriteLine(block.MerkleRoot);
+
+            bool result =
+                MerkleUtilities.VerifyMerkleProof(
+                    txHash,
+                    proof,
+                    block.MerkleRoot);
+
+            Console.WriteLine();
+
+            if (result)
+            {
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine("[SPV Verification Passed: TRUE]");
+            }
+            else
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("[SPV Verification Passed: FALSE]");
+            }
+
+            Console.ResetColor();
         }
 
         private static void HandleShutdown()

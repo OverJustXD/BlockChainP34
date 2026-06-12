@@ -9,7 +9,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
-
+using BlockChainP34.Models;
 namespace BlockChainP34.Service.P2P
 {
     public class P2PServer
@@ -48,8 +48,11 @@ namespace BlockChainP34.Service.P2P
                     catch (Exception ex)
                     {
                         if (!_isRunning) break;
+                        Console.ForegroundColor = ConsoleColor.Red;
                         Console.WriteLine($"[P2P Сервер ERROR] Помилка прийняття з'єднання: {ex.Message}");
+                        Console.ResetColor();
                     }
+
                 }
             });
         }
@@ -92,13 +95,25 @@ namespace BlockChainP34.Service.P2P
                         Console.WriteLine("[P2P Сервер] Отримано запит headers. Надсилаємо Merkle roots...");
 
                         var roots = new List<string>();
-                        if (_blockchain?.Chain != null)
+                        if (_blockchain?.Chain != null && _blockchain.Chain.Count > 0)
                         {
                             roots = _blockchain.Chain
                                 .Where(b => b != null && !string.IsNullOrWhiteSpace(b.MerkleRoot))
                                 .Select(b => b.MerkleRoot)
                                 .Distinct(StringComparer.OrdinalIgnoreCase)
                                 .ToList();
+
+                            Console.WriteLine($"[P2P Сервер] Надсилаємо {roots.Count} Merkle roots");
+                        }
+                        else
+                        {
+                            Console.WriteLine("[P2P Сервер] Увага! Блокчейн порожній або null!");
+                            if (_blockchain?.Chain != null && _blockchain.Chain.Count > 0)
+                            {
+                                var genesisRoot = _blockchain.Chain[0]?.MerkleRoot;
+                                if (!string.IsNullOrWhiteSpace(genesisRoot))
+                                    roots.Add(genesisRoot);
+                            }
                         }
 
                         var headersResponse = new P2PMessage

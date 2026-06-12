@@ -26,7 +26,16 @@ namespace BlockChainP34.Models
 
         public string ToRawString()
         {
-            return $"{From}{To}{Amount}{TimeStamp:O}{Fee}";
+            return string.Join("|", new[]
+            {
+        Id ?? string.Empty,
+        From ?? string.Empty,
+        To ?? string.Empty,
+        Amount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        Fee.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        TimeStamp.ToUniversalTime().ToString("O"),
+        LockTime.ToString()
+    });
         }
 
         public override string ToString()
