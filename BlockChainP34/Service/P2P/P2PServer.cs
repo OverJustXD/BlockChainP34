@@ -1,4 +1,5 @@
 ﻿using BlockChainP34.Models;
+using BlockChainP34.Service;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -8,7 +9,6 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
-using BlockChainP34.Service;
 
 namespace BlockChainP34.Service.P2P
 {
@@ -18,6 +18,7 @@ namespace BlockChainP34.Service.P2P
         private readonly P2PClient _client;
         private TcpListener _listener;
         private bool _isRunning;
+        public bool SimulateFakeSpvProof { get; set; } = false;
 
         public P2PServer(BlockChainService blockchain, P2PClient client)
         {
@@ -68,7 +69,7 @@ namespace BlockChainP34.Service.P2P
                 using var writer = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true };
 
                 var json = await reader.ReadLineAsync();
-                if (string.IsNullOrEmpty(json)) return;
+                if (string.IsNullOrWhiteSpace(json)) return;
 
                 var message = JsonSerializer.Deserialize<P2PMessage>(json);
                 if (message == null) return;
@@ -77,51 +78,144 @@ namespace BlockChainP34.Service.P2P
                 {
                     case "request_chain":
                         Console.WriteLine("[P2P Сервер] Інший вузол запросив наш блокчейн. Надсилаємо копію...");
+
+                        var currentChain = _blockchain?.Chain ?? new List<Block>();
                         var chainResponse = new P2PMessage
                         {
                             Type = "chain",
-                            Data = JsonSerializer.Serialize(_blockchain.Chain)
+                            Data = JsonSerializer.Serialize(currentChain)
                         };
                         await writer.WriteLineAsync(JsonSerializer.Serialize(chainResponse));
                         break;
 
+                    case "REQUEST_HEADERS":
+                        Console.WriteLine("[P2P Сервер] Отримано запит headers. Надсилаємо Merkle roots...");
+
+                        var roots = new List<string>();
+                        if (_blockchain?.Chain != null)
+                        {
+                            roots = _blockchain.Chain
+                                .Where(b => b != null && !string.IsNullOrWhiteSpace(b.MerkleRoot))
+                                .Select(b => b.MerkleRoot)
+                                .Distinct(StringComparer.OrdinalIgnoreCase)
+                                .ToList();
+                        }
+
+                        var headersResponse = new P2PMessage
+                        {
+                            Type = "HEADERS",
+                            Data = JsonSerializer.Serialize(roots)
+                        };
+                        await writer.WriteLineAsync(JsonSerializer.Serialize(headersResponse));
+                        break;
+
                     case "chain":
                         var incomingChain = JsonSerializer.Deserialize<List<Block>>(message.Data);
-                        if (incomingChain != null)
+                        if (incomingChain != null && _blockchain != null)
                         {
                             _blockchain.ReplaceChain(incomingChain);
+                            TrustedHeaderStore.SyncFromChain(incomingChain);
                         }
                         break;
 
                     case "REQUEST_MEMPOOL":
                         Console.WriteLine("[P2P Сервер] Отримано запит [REQUEST_MEMPOOL]. Надсилаємо свій список транзакцій...");
+                        var currentMempool = _blockchain?.PendingTransactions ?? new List<Transaction>();
                         var mempoolResponse = new P2PMessage
                         {
                             Type = "SYNC_MEMPOOL",
-                            Data = JsonSerializer.Serialize(_blockchain.PendingTransactions)
+                            Data = JsonSerializer.Serialize(currentMempool)
                         };
                         await writer.WriteLineAsync(JsonSerializer.Serialize(mempoolResponse));
                         break;
 
                     case "SYNC_MEMPOOL":
                         var incomingTxs = JsonSerializer.Deserialize<List<Transaction>>(message.Data);
-                        if (incomingTxs != null && incomingTxs.Count > 0)
+                        if (incomingTxs != null && incomingTxs.Count > 0 && _blockchain?.PendingTransactions != null)
                         {
                             foreach (var tx in incomingTxs)
                             {
                                 if (!_blockchain.PendingTransactions.Any(t => t.Id == tx.Id))
-                                {
                                     _blockchain.AddTransactionToMempool(tx);
-                                }
                             }
                         }
+                        break;
+
+                    case "REQUEST_SPV_PROOF":
+                        await HandleSpvProofRequestAsync(message.Data, writer);
                         break;
                 }
             }
             catch (Exception ex)
             {
+                Console.ForegroundColor = ConsoleColor.Red;
                 Console.WriteLine($"[P2P Сервер ERROR] Помилка обробки запиту: {ex.Message}");
+                Console.ResetColor();
             }
+        }
+
+        private async Task HandleSpvProofRequestAsync(string txId, StreamWriter writer)
+        {
+            var response = BuildSpvProofResponse(txId);
+
+            var payload = new P2PMessage
+            {
+                Type = "SPV_RESULT",
+                Data = JsonSerializer.Serialize(response)
+            };
+
+            await writer.WriteLineAsync(JsonSerializer.Serialize(payload));
+        }
+
+        private SpvProofResponse BuildSpvProofResponse(string txId)
+        {
+            if (SimulateFakeSpvProof)
+            {
+                return new SpvProofResponse
+                {
+                    TxId = txId,
+                    TxHash = Guid.NewGuid().ToString("N"),
+                    ExpectedRoot = Guid.NewGuid().ToString("N"),
+                    Included = true,
+                    Proof = new List<MerkleProofStep>
+                    {
+                        new MerkleProofStep
+                        {
+                            SiblingHash = Guid.NewGuid().ToString("N"),
+                            IsLeftSibling = true
+                        }
+                    }
+                };
+            }
+
+            if (_blockchain?.Chain != null && _blockchain.Chain.Count > 0)
+            {
+                foreach (var block in _blockchain.Chain)
+                {
+                    if (block?.Transactions == null) continue;
+
+                    var tx = block.Transactions.FirstOrDefault(t => string.Equals(t.Id, txId, StringComparison.OrdinalIgnoreCase));
+                    if (tx == null) continue;
+
+                    return new SpvProofResponse
+                    {
+                        TxId = txId,
+                        TxHash = MerkleUtilities.ComputeTransactionHash(tx),
+                        ExpectedRoot = block.MerkleRoot,
+                        Included = true,
+                        Proof = MerkleUtilities.BuildMerkleProof(block.Transactions, txId)
+                    };
+                }
+            }
+
+            return new SpvProofResponse
+            {
+                TxId = txId,
+                TxHash = string.Empty,
+                ExpectedRoot = (_blockchain?.Chain != null && _blockchain.Chain.Count > 0) ? _blockchain.Chain[0].MerkleRoot : string.Empty,
+                Included = false,
+                Proof = new List<MerkleProofStep>()
+            };
         }
     }
 }

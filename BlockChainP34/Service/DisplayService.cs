@@ -41,37 +41,20 @@ namespace BlockChainP34.Service
         {
             foreach (var block in chain)
             {
-                Console.WriteLine(new string('-', 60));
+                Console.WriteLine(new string('=', 60));
+                Console.WriteLine($"BLOCK #{block.Index} | Hash: {block.Hash.Substring(0, 10)}...");
 
-                if (Verbose)
+                if (block.Transactions != null && block.Transactions.Count > 0)
                 {
-                    Console.WriteLine($"Index: {block.Index}");
-                    Console.WriteLine($"Timestamp: {block.Timestamp}");
-                    Console.WriteLine($"Hash: {block.Hash}");
-                    Console.WriteLine($"PrevHash: {block.PrevHash}");
-                    Console.WriteLine($"Nonce: {block.Nonce}");
-                    Console.WriteLine($"Difficulty: {block.DifficultyAtMining}");
-                    Console.WriteLine($"Mining Time: {block.MiningDurationSecond:F4} sec");
-
-                    Console.WriteLine("\nTransactions:");
-
-                    if (block.Transactions != null && block.Transactions.Count > 0)
+                    foreach (var tx in block.Transactions)
                     {
-                        foreach (var tx in block.Transactions)
-                        {
-                            DisplayTransaction(tx);
-                        }
-
-                        DisplayBlockEconomy(block);
-                    }
-                    else
-                    {
-                        Console.WriteLine("  No transactions");
+                        Console.WriteLine($"  -> TX ID: {tx.Id}");
+                        Console.WriteLine($"     Amount: {tx.Amount} | From: {Short(tx.From)} | To: {Short(tx.To)}");
                     }
                 }
                 else
                 {
-                    Console.WriteLine($"#{block.Index} | {block.Timestamp} | TX: {block.Transactions?.Count ?? 0}");
+                    Console.WriteLine("  No transactions in this block.");
                 }
             }
         }
