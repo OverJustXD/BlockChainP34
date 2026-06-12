@@ -10,6 +10,7 @@ namespace BlockChainP34.Service
 {
     public class BlockChainService
     {
+        public TimeSpan TransactionTtl { get; set; } = TimeSpan.FromMinutes(5);
         public Dictionary<string, decimal> BalancesState { get; private set; } = new();
         public List<Block> Chain { get; set; }
         public List<Transaction> PendingTransactions { get; private set; } = new();
@@ -56,21 +57,18 @@ namespace BlockChainP34.Service
         }
 
         public (bool success, string error) CreateAndAddTransaction(
-            string from,
-            string to,
-            decimal amount,
-            decimal fee,
-            string privateKey)
+    string from,
+    string to,
+    decimal amount,
+    decimal fee,
+    string privateKey,
+    int lockTime = 0)
         {
             try
             {
-                var tx = TransactionService.CreateTransaction(
-                    from,
-                    to,
-                    amount,
-                    privateKey,
-                    fee
-                );
+                var tx = TransactionService.CreateTransaction(from, to, amount, privateKey, fee);
+
+                tx.LockTime = lockTime;
 
                 var result = AddTransactionToMempool(tx);
                 return result;
@@ -224,20 +222,30 @@ namespace BlockChainP34.Service
 
         public (bool success, Block block, string error) MinePendingTransactions(string minerPublicKey)
         {
+            int evictedCount = PendingTransactions.RemoveAll(tx => (DateTime.UtcNow - tx.TimeStamp) > TransactionTtl);
+            if (evictedCount > 0)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"[Mempool] Видалено {evictedCount} застарілих транзакцій за TTL.");
+                Console.ResetColor();
+            }
+
             if (PendingTransactions.Count == 0)
                 return (false, null, "No transactions to mine.");
 
-            EvictStaleTransactions(60);
-
             try
             {
-                PendingTransactions = PendingTransactions
-                    .Where(tx => (DateTime.UtcNow - tx.TimeStamp).TotalSeconds <= 600)
+              
+                var allowedTransactions = PendingTransactions
+                    .Where(tx => tx.LockTime <= Chain.Count)
                     .ToList();
 
-                var transactionsToInclude = PendingTransactions
-                    .OrderByDescending(tx => Math.Max(0, tx.Fee - NetworkBaseFee))
-                    .Take(10)
+                if (allowedTransactions.Count == 0)
+                    return (false, null, "Всі транзакції в Mempool заблоковані за LockTime.");
+
+                var transactionsToInclude = allowedTransactions
+                    .OrderByDescending(tx => tx.Amount)
+                    .Take(10) 
                     .ToList();
 
                 decimal totalTips = 0;
@@ -249,7 +257,6 @@ namespace BlockChainP34.Service
                         continue;
 
                     decimal burnRate = 0.5m;
-
                     decimal tip = tx.Fee * (1 - burnRate);
                     decimal burn = tx.Fee * burnRate;
 
@@ -283,10 +290,10 @@ namespace BlockChainP34.Service
                 Chain.Add(block);
                 SaveStateSnapshot();
                 RebuildState();
+
                 var includedIds = transactionsToInclude.Select(t => t.Id).ToHashSet();
                 PendingTransactions.RemoveAll(tx => includedIds.Contains(tx.Id));
 
-                RebuildState();
                 AdjustDifficulty();
 
                 return (true, block, null);
