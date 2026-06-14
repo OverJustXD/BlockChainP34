@@ -13,6 +13,7 @@ namespace BlockChainP34.Models
         public byte[] SenderPublicKey { get; set; } 
         public decimal Fee { get; set; }
         public int LockTime { get; set; } = 0;
+        public string TokenSymbol { get; set; } = "MAIN";
 
         public Transaction(string from, string to, decimal amount, decimal fee, int lockTime = 0)
         {
@@ -34,7 +35,8 @@ namespace BlockChainP34.Models
         Amount.ToString(System.Globalization.CultureInfo.InvariantCulture),
         Fee.ToString(System.Globalization.CultureInfo.InvariantCulture),
         TimeStamp.ToUniversalTime().ToString("O"),
-        LockTime.ToString()
+        LockTime.ToString(),
+        TokenSymbol ?? "MAIN"
     });
         }
 

@@ -14,12 +14,17 @@
         public decimal BurnedFees { get; set; }
         public decimal TipFees { get; set; }
 
-        public Block(int index, DateTime timestamp, List<Transaction> transactions, string prevHash, string author)
+        public string MinerAddress { get; set; } = string.Empty;
+
+        public Block(int index, DateTime timestamp, List<Transaction> transactions, string prevHash, string minerAddress)
         {
             Index = index;
             Timestamp = timestamp;
             Transactions = transactions ?? new List<Transaction>();
             PrevHash = prevHash ?? string.Empty;
+
+            MinerAddress = minerAddress; 
+
             Hash = string.Empty;
             Nonce = 0;
             MerkleRoot = string.Empty;

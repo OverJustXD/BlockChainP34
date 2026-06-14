@@ -8,13 +8,15 @@ namespace BlockChainP34.Service
     public class DisplayService
     {
         public bool Verbose { get; set; } = false;
-
         public decimal NetworkBaseFee { get; set; } = 1.0m;
+
+        #region Public Methods
 
         public void PrintChain(List<Block> chain)
         {
             DisplayBlockChain(chain);
         }
+
         public void DisplayTransactionFull(Transaction tx, Block block)
         {
             Console.WriteLine("\n====================================================");
@@ -42,7 +44,7 @@ namespace BlockChainP34.Service
             foreach (var block in chain)
             {
                 Console.WriteLine(new string('=', 60));
-                Console.WriteLine($"BLOCK #{block.Index} | Hash: {block.Hash.Substring(0, 10)}...");
+                Console.WriteLine($"BLOCK #{block.Index} | Hash: {block.Hash?.Substring(0, Math.Min(10, block.Hash.Length))}...");
 
                 if (block.Transactions != null && block.Transactions.Count > 0)
                 {
@@ -59,6 +61,10 @@ namespace BlockChainP34.Service
             }
         }
 
+        #endregion
+
+        #region Private Methods
+
         private void DisplayTransaction(Transaction tx)
         {
             if (tx.From == "SYSTEM")
@@ -70,7 +76,9 @@ namespace BlockChainP34.Service
             }
 
             decimal tip = tx.Fee - NetworkBaseFee;
-            if (tip < 0) tip = 0;
+
+            if (tip < 0)
+                tip = 0;
 
             Console.WriteLine(
                 $"  [{tx.Id}] {Short(tx.From)} -> {Short(tx.To)} | " +
@@ -82,10 +90,8 @@ namespace BlockChainP34.Service
         {
             Console.ForegroundColor = ConsoleColor.DarkGray;
             Console.WriteLine($"\n  [BLOCK ECONOMY]");
-
             Console.WriteLine($"  Burned: {block.BurnedFees:F2}");
             Console.WriteLine($"  Tips: {block.TipFees:F2}");
-
             Console.ResetColor();
         }
 
@@ -96,5 +102,7 @@ namespace BlockChainP34.Service
 
             return value.Length <= 6 ? value : value.Substring(0, 6) + "...";
         }
+
+        #endregion
     }
 }

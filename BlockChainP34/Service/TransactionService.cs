@@ -12,21 +12,21 @@ namespace BlockChainP34.Service
         }
 
         public static Transaction CreateTransaction(
-    string from,
-    string to,
-    decimal amount,
-    string privateKey,
-    decimal fee = 0)
+     string from,
+     string to,
+     decimal amount,
+     string privateKey,
+     decimal fee = 0,
+     string tokenSymbol = "MAIN")
         {
             var tx = new Transaction(from, to, amount, fee);
+            tx.TokenSymbol = tokenSymbol ?? "MAIN";
 
             SignTransaction(tx, privateKey);
 
             var validation = ValidateTransaction(tx);
             if (!validation.IsValid)
-            {
                 throw new Exception($"Invalid transaction: {validation.error}");
-            }
 
             return tx;
         }
